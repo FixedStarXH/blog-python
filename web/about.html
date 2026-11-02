@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>关于 — LUMI</title>
+  <meta name="description" content="关于博主,技术栈与联系方式。">
+  <link rel="stylesheet" href="css/style.css?v=28">
+  <style>
+    /* 侧边标题区：无黑框，上下墨色粗线 + 混合字体排版 */
+    .side-about {
+      border-top: 3px solid var(--ink);
+      border-bottom: 3px solid var(--ink);
+      padding: 22px 4px 20px;
+      margin-bottom: 28px;
+    }
+
+    .sa-coord {
+      display: block;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: .22em;
+      color: var(--red);
+    }
+
+    .sa-title {
+      font-size: 42px;
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: -.03em;
+      text-transform: uppercase;
+      margin: 12px 0 14px;
+      color: var(--ink);
+    }
+
+    .sa-title .outline {
+      -webkit-text-stroke: 2px var(--ink);
+      color: transparent;
+    }
+
+    .sa-sub {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      color: var(--ink);
+    }
+
+    .sa-line {
+      width: 42px;
+      height: 3px;
+      background: var(--red);
+      margin: 16px 0;
+    }
+
+    .sa-quote {
+      font-size: 14px;
+      line-height: 1.8;
+      color: var(--gray-6);
+    }
+  </style>
+</head>
+
+<body>
+
+  <header class="topbar" id="topbar"></header>
+
+  <section class="page-hero">
+    <div class="grid">
+      <div class="crumb"><a href="index.html">Home</a> / <span>About</span></div>
+      <h1>关于我</h1>
+      <div class="sub">ABOUT ME</div>
+    </div>
+  </section>
+
+  <section class="about-body">
+    <div class="grid">
+      <div class="main">
+        <h2>关于本系统</h2>
+        <p>这是一个<b>多作者博客系统</b>:注册用户即可投稿,编辑与管理员审核后发布,支持文章、专栏、分类、标签、评论的完整内容生态。</p>
+        <p>系统基于 Go 与 Gin 构建,后端分层架构,前端为瑞士国际主义风格的 SPA 应用。</p>
+
+        <h2>技术栈</h2>
+        <p>后端 <b>Go / Gin / GORM / MySQL</b>,前端原生 HTML / CSS / JS(SPA)。工程化覆盖分层架构、JWT 鉴权、RBAC 权限、投稿审核工作流、文件上传、IP
+          防刷、定时发布、软删除等实践。</p>
+        <div class="skill-chips">
+          <span class="skill-chip">Go</span>
+          <span class="skill-chip">Gin</span>
+          <span class="skill-chip">GORM</span>
+          <span class="skill-chip">MySQL</span>
+          <span class="skill-chip">Redis</span>
+          <span class="skill-chip">JWT</span>
+          <span class="skill-chip">Docker</span>
+          <span class="skill-chip">TCP/IP</span>
+          <span class="skill-chip">Goroutine</span>
+          <span class="skill-chip">Channel</span>
+          <span class="skill-chip">Context</span>
+          <span class="skill-chip">Vue 3</span>
+          <span class="skill-chip">Swiss Design</span>
+        </div>
+
+        <h2>核心能力</h2>
+        <ul class="skill-list">
+          <li>多作者投稿审核工作流</li>
+          <li>三级角色权限(用户/编辑/管理员)</li>
+          <li>专栏与内容组织</li>
+          <li>完整后台管理控制台</li>
+        </ul>
+
+        <h2>友情链接</h2>
+        <div id="links-list" class="links-list" style="display:flex;flex-wrap:wrap;gap:12px;">
+          <div class="empty" style="color:var(--gray-a);">暂无友链</div>
+        </div>
+      </div>
+
+      <aside class="side">
+        <div class="side-about">
+          <span class="sa-coord">01 / ABOUT ME</span>
+          <div class="sa-title">ABOUT<span class="outline">ME.</span></div>
+          <div class="sa-sub">GO · GIN · GORM · REDIS</div>
+          <div class="sa-line"></div>
+          <p class="sa-quote">一个 Go 后端开发者的技术笔记，记录思考、踩坑与成长。</p>
+        </div>
+        <h2>角色权限</h2>
+        <ul class="skill-list">
+          <li>普通用户 <span class="pct">投稿·评论</span></li>
+          <li>编辑 <span class="pct">审核·管理</span></li>
+          <li>管理员 <span class="pct">全权·设置</span></li>
+        </ul>
+        <h2>开始使用</h2>
+        <ul class="contact-list" id="contact-list">
+          <li><a href="register.html">立即注册 →</a></li>
+          <li><a href="articles.html">浏览文章 →</a></li>
+          <li><a href="admin/login.html">管理后台 →</a></li>
+          <li><a id="ct-github" href="https://github.com" target="_blank" rel="noopener">GitHub →</a></li>
+          <li><a id="ct-email" href="mailto:hello@example.com">邮箱联系 →</a></li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <footer class="footer" id="footer"></footer>
+
+  <script src="js/api.js?v=11"></script>
+  <script src="js/common.js?v=21"></script>
+  <script type="module" src="./src/main-public.jsx"></script>
+  <script>
+    initPage('about').then(async () => {
+      try {
+        const site = await api.get('/api/site');
+        if (site.github) { document.getElementById('ct-github').href = site.github; }
+        if (site.email) { document.getElementById('ct-email').href = 'mailto:' + site.email; }
+      } catch (e) { }
+
+      // 加载友情链接
+      try {
+        const links = await api.get('/api/links');
+        const wrap = document.getElementById('links-list');
+        if (links && links.length) {
+          wrap.innerHTML = links.map(l =>
+            `<a href="${esc(l.url)}" target="_blank" rel="noopener" style="display:inline-block;padding:8px 16px;border:1px solid var(--ink);font-size:13px;">${esc(l.name)}${l.description ? ' <span style="color:var(--gray-a);">— ' + esc(l.description) + '</span>' : ''}</a>`
+          ).join('');
+        }
+      } catch (e) { }
+    });
+  </script>
+</body>
+
+</html>

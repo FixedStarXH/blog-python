@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>仪表盘 — 后台管理</title>
+  <link rel="stylesheet" href="../css/admin.css?v=19">
+  <style>
+    /* 浏览量趋势图：瑞士风硬边框卡片 + 红色折线，纯 SVG 无第三方库 */
+    .trend-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .trend-days {
+      display: inline-flex;
+      border: 1px solid var(--line, #DDD8CE);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .trend-days button {
+      background: #fff;
+      border: none;
+      border-right: 1px solid var(--line, #DDD8CE);
+      padding: 5px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      color: var(--gray, #777);
+      font-family: var(--mono, Consolas, monospace);
+    }
+
+    .trend-days button:last-child {
+      border-right: none;
+    }
+
+    .trend-days button.on {
+      background: var(--red, #E53012);
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .trend-chart {
+      margin-top: 6px;
+      position: relative;
+    }
+
+    .trend-chart .trend-dot circle {
+      cursor: pointer;
+      transition: r .15s ease;
+    }
+
+    .trend-chart .trend-dot:hover circle {
+      r: 6px;
+    }
+
+    .trend-sum {
+      font-family: var(--mono, Consolas, monospace);
+      font-size: 12px;
+      color: var(--gray, #777);
+    }
+
+    .trend-sum b {
+      color: var(--red, #E53012);
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="admin-wrap">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main">
+      <div class="main-header">
+        <h1>仪表盘</h1>
+        <span class="sub">Dashboard</span>
+      </div>
+
+      <div class="stats" id="stats"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div class="trend-head">
+            <h3>浏览量趋势</h3>
+            <span class="trend-sum">近 <b id="trend-days-label">30</b> 天合计 <b id="trend-total">-</b> 次</span>
+            <div class="trend-days">
+              <button type="button" onclick="setDays(7)" id="d7">7天</button>
+              <button type="button" onclick="setDays(30)" id="d30" class="on">30天</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="trend-chart" id="views-chart">
+            <div class="empty">加载中…</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>热门文章 TOP5</h3>
+        </div>
+        <div class="panel-body">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>标题</th>
+                <th>分类</th>
+                <th>阅读量</th>
+              </tr>
+            </thead>
+            <tbody id="hot-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>最近评论</h3>
+        </div>
+        <div class="panel-body">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>内容</th>
+                <th>昵称</th>
+                <th>状态</th>
+                <th>时间</th>
+              </tr>
+            </thead>
+            <tbody id="comment-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="../js/api.js?v=8"></script>
+  <script src="../js/admin-common.js?v=11"></script>
+  <script>
+    initAdmin('dashboard');
+
+    let days = 30;
+
+    // 切换统计周期（7/30 天），重新请求趋势
+    function setDays(n) {
+      days = n;
+      document.getElementById('d7').classList.toggle('on', n === 7);
+      document.getElementById('d30').classList.toggle('on', n === 30);
+      document.getElementById('trend-days-label').textContent = n;
+      document.getElementById('trend-total').textContent = '-';
+      loadTrend();
+    }
+
+    // 纯 SVG 折线图（无第三方库）：面积渐变 + 红色折线 + 数据点 + 原生 title 提示
+    function drawTrend(points) {
+      const el = document.getElementById('views-chart');
+      if (!points || !points.length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+      const W = 880, H = 250, PL = 42, PR = 14, PT = 16, PB = 32;
+      const iw = W - PL - PR, ih = H - PT - PB;
+      const max = Math.max(...points.map(p => p.views), 1);
+      const niceMax = max <= 5 ? 5 : Math.ceil(max / 10) * 10;
+      const x = i => PL + (points.length === 1 ? iw / 2 : iw * i / (points.length - 1));
+      const y = v => PT + ih * (1 - v / niceMax);
+      const path = points.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.views).toFixed(1)).join(' ');
+      const area = path + ' L' + x(points.length - 1).toFixed(1) + ' ' + (PT + ih) + ' L' + x(0).toFixed(1) + ' ' + (PT + ih) + ' Z';
+
+      // 横向网格线 + 刻度（4 段）
+      let grid = '';
+      for (let g = 0; g <= 3; g++) {
+        const gy = (PT + ih * g / 3).toFixed(1);
+        const val = Math.round(niceMax * (1 - g / 3));
+        grid += `<line x1="${PL}" y1="${gy}" x2="${W - PR}" y2="${gy}" stroke="#DDD8CE" stroke-dasharray="4 4"/>
+          <text x="${PL - 8}" y="${+gy + 4}" text-anchor="end" font-size="11" fill="#A9A49B">${val}</text>`;
+      }
+      const dots = points.map((p, i) => `
+        <g class="trend-dot"><circle cx="${x(i).toFixed(1)}" cy="${y(p.views).toFixed(1)}" r="3.5" fill="#E53012" stroke="#fff" stroke-width="1.5"/>
+          <title>${p.date}：${p.views} 次浏览</title></g>`).join('');
+
+      el.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img" aria-label="浏览量趋势折线图">
+        <defs><linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#E53012"/><stop offset="100%" stop-color="#E53012" stop-opacity="0"/>
+        </linearGradient></defs>
+        ${grid}
+        <path d="${area}" fill="url(#trendGrad)" opacity=".4"/>
+        <path d="${path}" fill="none" stroke="#E53012" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${dots}
+        <text x="${PL}" y="${H - 10}" font-size="11" fill="#A9A49B">${points[0].date}</text>
+        <text x="${W - PR}" y="${H - 10}" text-anchor="end" font-size="11" fill="#A9A49B">${points[points.length - 1].date}</text>
+      </svg>`;
+    }
+
+    async function loadTrend() {
+      try {
+        const pts = await api.get('/api/admin/dashboard/views-trend?days=' + days);
+        drawTrend(pts || []);
+        const total = (pts || []).reduce((s, p) => s + (p.views || 0), 0);
+        document.getElementById('trend-total').textContent = total;
+      } catch (e) { /* 趋势图加载失败不阻塞其他统计 */ }
+    }
+
+    async function load() {
+      try {
+        const d = await api.get('/api/admin/dashboard');
+        const c = d.counts || {};
+        document.getElementById('stats').innerHTML = `
+      <div class="stat-card"><div class="num red">${c.articles ?? '-'}</div><div class="lbl">文章总数</div></div>
+      <div class="stat-card"><div class="num">${c.views ?? '-'}</div><div class="lbl">总浏览量</div></div>
+      <div class="stat-card"><div class="num green">${c.comments ?? '-'}</div><div class="lbl">评论总数</div></div>
+      <div class="stat-card"><div class="num orange">${c.pendingComments ?? '-'}</div><div class="lbl">待审核评论</div></div>`;
+
+        document.getElementById('hot-body').innerHTML = (d.hotArticles || []).map((a, i) => `
+      <tr><td>${i + 1}</td><td class="title-cell"><span class="ellipsis">${esc(a.title)}</span></td>
+      <td>${esc(a.category?.name || '-')}</td><td>${a.viewCount ?? 0}</td></tr>`).join('')
+          || '<tr><td colspan="4"><div class="empty">暂无数据</div></td></tr>';
+
+        document.getElementById('comment-body').innerHTML = (d.recentComments || []).map(c => `
+      <tr><td class="title-cell"><span class="ellipsis">${esc(c.content)}</span></td>
+      <td>${esc(c.nickname || '匿名')}</td><td>${commentStatusBadge(c.status)}</td>
+      <td>${fmtDateTime(c.createdAt)}</td></tr>`).join('')
+          || '<tr><td colspan="4"><div class="empty">暂无评论</div></td></tr>';
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
+    load();
+    loadTrend();
+  </script>
+</body>
+
+</html>

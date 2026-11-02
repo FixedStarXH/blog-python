@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>审计日志 — 后台管理</title>
+  <link rel="stylesheet" href="../css/admin.css?v=19">
+</head>
+
+<body>
+  <div class="admin-wrap">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main">
+      <div class="main-header">
+        <h1>审计日志</h1>
+        <span class="sub">Audit Log</span>
+      </div>
+
+      <div class="toolbar">
+        <select id="f-action" onchange="reload(1)">
+          <option value="">全部动作</option>
+          <option>新建文章</option>
+          <option>更新文章</option>
+          <option>删除文章</option>
+          <option>审核通过文章</option>
+          <option>驳回文章</option>
+          <option>批量操作文章</option>
+          <option>新建分类</option>
+          <option>删除分类</option>
+          <option>新建标签</option>
+          <option>删除标签</option>
+          <option>上传图片</option>
+          <option>删除图片</option>
+          <option>新建友链</option>
+          <option>删除友链</option>
+          <option>更新站点设置</option>
+          <option>修改用户状态</option>
+          <option>修改用户角色</option>
+          <option>审核通过评论</option>
+          <option>驳回评论</option>
+          <option>修改评论状态</option>
+          <option>删除评论</option>
+          <option>批量操作评论</option>
+          <option>后台登录</option>
+          <option>用户注册</option>
+          <option>退出登录</option>
+          <option>清空审计日志</option>
+        </select>
+        <span class="toolbar-hint">记录后台所有写操作与登录尝试，防篡改、可追溯</span>
+        <button class="btn sm danger" id="btn-clear" onclick="clearLogs()" style="display:none">清空日志</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-body" style="padding:0;">
+          <table class="data">
+            <thead>
+              <tr>
+                <th style="width:90px">时间</th>
+                <th style="width:100px">操作人</th>
+                <th style="width:60px">角色</th>
+                <th style="width:110px">动作</th>
+                <th style="width:70px">目标</th>
+                <th>详情</th>
+                <th style="width:110px">IP</th>
+                <th style="width:60px">结果</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </main>
+  </div>
+
+  <script src="../js/api.js?v=8"></script>
+  <script src="../js/admin-common.js?v=11"></script>
+  <script>
+    initAdmin('audit');
+    let page = 1;
+    const pageSize = 20;
+
+    // 清空按钮仅管理员(role=3)可见，后端 DELETE 接口同样校验管理员
+    const admin = getAdmin();
+    if (admin && admin.role === 3) document.getElementById('btn-clear').style.display = '';
+
+    async function reload(p) {
+      if (p) page = p;
+      const action = document.getElementById('f-action').value;
+      const q = new URLSearchParams({ page, pageSize });
+      if (action) q.set('action', action);
+      try {
+        const d = await api.get('/api/admin/audit-logs?' + q.toString());
+        document.getElementById('tbody').innerHTML = (d.list || []).map(it => `
+      <tr>
+        <td style="font-family:monospace;font-size:12px;">${fmtDateTime(it.createdAt)}</td>
+        <td>${esc(it.username || '未登录')}</td>
+        <td>${esc(it.roleName || '-')}</td>
+        <td>${esc(it.action)}</td>
+        <td>${esc(it.targetType || '-')}${it.targetId ? ' #' + it.targetId : ''}</td>
+        <td class="title-cell"><span class="ellipsis" title="${esc(it.detail || '')}">${esc(it.detail || '-')}</span></td>
+        <td style="font-family:monospace;font-size:12px;">${esc(it.ip || '-')}</td>
+        <td>${it.status === 1 ? '<span class="badge green">成功</span>' : '<span class="badge red">失败</span>'}</td>
+      </tr>`).join('') || '<tr><td colspan="8"><div class="empty">暂无审计记录</div></td></tr>';
+        renderPager(document.getElementById('pagination'), page, Math.max(1, Math.ceil(d.total / pageSize)), reload);
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function clearLogs() {
+      if (!confirm('确定清空全部审计日志？该操作不可恢复，且本身也会被记录。')) return;
+      try {
+        await api.del('/api/admin/audit-logs');
+        toast('已清空');
+        reload();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    reload(1);
+  </script>
+</body>
+
+</html>

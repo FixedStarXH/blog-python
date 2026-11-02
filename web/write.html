@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>写文章 — 博客系统</title>
+  <meta name="description" content="投稿新文章，审核通过后公开展示。">
+  <link rel="stylesheet" href="css/style.css?v=29">
+  <!-- Markdown 解析：保存时把 Markdown 转 HTML -->
+  <script src="js/marked.min.js"></script>
+  <style>
+    .write-main {
+      padding: 40px 0 80px;
+    }
+
+    .write-head {
+      grid-column: 1/13;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+
+    .write-head h1 {
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: -.01em;
+    }
+
+    .write-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink);
+      border: 2px solid var(--ink);
+      padding: 8px 16px;
+      background: var(--white);
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+
+    .write-back:hover {
+      transform: translate(-2px, -2px);
+      box-shadow: 4px 4px 0 var(--red);
+      color: var(--ink);
+    }
+
+    .write-form {
+      grid-column: 1/13;
+      border: 1px solid var(--ink);
+      background: var(--white);
+      padding: 32px;
+    }
+
+    .write-form .field {
+      margin-bottom: 18px;
+    }
+
+    .write-form label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--gray-6);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .write-form input[type="text"],
+    .write-form textarea,
+    .write-form select {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      padding: 12px 14px;
+      font-size: 14px;
+      color: var(--ink);
+      outline: none;
+      font-family: inherit;
+      transition: border-color .15s ease;
+    }
+
+    .write-form input[type="text"]:focus,
+    .write-form textarea:focus,
+    .write-form select:focus {
+      border-color: var(--red);
+    }
+
+    .write-form textarea {
+      resize: vertical;
+      line-height: 1.7;
+    }
+
+    .write-form select {
+      cursor: pointer;
+    }
+
+    .write-hint {
+      font-size: 12px;
+      color: var(--gray-6);
+      margin-top: 6px;
+    }
+
+    /* 标签多选 chips：点击切换选中态，选中后红底 */
+    .tag-pick {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .tag-pick .chip {
+      border: 2px solid var(--ink);
+      background: var(--white);
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      transition: transform .15s ease, background .15s ease, color .15s ease, border-color .15s ease;
+    }
+
+    .tag-pick .chip:hover {
+      transform: rotate(-2deg) scale(1.05);
+    }
+
+    .tag-pick .chip.on {
+      background: var(--red);
+      color: #fff;
+      border-color: var(--red);
+    }
+
+    /* 驳回原因提示条 */
+    .reject-tip {
+      border: 2px solid var(--red);
+      background: #FBE9E3;
+      color: #C1240B;
+      padding: 12px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 22px;
+    }
+
+    body.dark .reject-tip {
+      background: #3A1F18;
+      color: #FF8A70;
+    }
+
+    .write-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 26px;
+      border-top: 1px solid var(--line);
+      padding-top: 22px;
+    }
+
+    .write-actions .btn-solid {
+      background: var(--ink);
+      color: var(--paper);
+      border: none;
+      padding: 13px 32px;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      cursor: pointer;
+      transition: background .15s ease, transform .18s ease, box-shadow .18s ease;
+    }
+
+    .write-actions .btn-solid:hover {
+      background: var(--red);
+      transform: translate(-2px, -2px);
+      box-shadow: 4px 4px 0 var(--ink);
+    }
+
+    .write-actions .cancel {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gray-6);
+    }
+
+    .write-actions .cancel:hover {
+      color: var(--red);
+    }
+
+    /* AI 功能按钮：标签墙风格（曲线角/2px描边/hover旋转缩放黄底），与后台 AI 按钮一致 */
+    .write-ai-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 8px;
+      padding: 4px 12px;
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      background: var(--white);
+      color: var(--ink);
+      font-family: var(--mono, Consolas, monospace);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      vertical-align: middle;
+      transition: transform .18s ease, box-shadow .2s ease, background .18s ease, color .18s ease;
+    }
+
+    .write-ai-btn:hover {
+      transform: translateY(-3px) rotate(-2deg) scale(1.05);
+      box-shadow: 4px 4px 0 var(--ink);
+      background: var(--yellow);
+      color: var(--ink);
+    }
+
+    .write-ai-btn:active {
+      transform: translateY(-1px) rotate(0deg) scale(1);
+      box-shadow: none;
+    }
+
+    .write-ai-btn:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    /* Markdown 工具栏：白底描边按钮行，与站点瑞士风一致 */
+    .md-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      background: var(--white);
+      padding: 8px;
+      margin-bottom: 10px;
+    }
+
+    .md-toolbar button {
+      min-width: 32px;
+      padding: 5px 10px;
+      border: 1px solid var(--ink);
+      background: var(--white);
+      color: var(--ink);
+      font-family: var(--mono, Consolas, monospace);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .15s ease, color .15s ease, transform .15s ease;
+    }
+
+    .md-toolbar button:hover {
+      background: var(--yellow, #FFE066);
+      transform: translateY(-1px);
+    }
+
+    .md-toolbar button:active {
+      transform: translateY(0);
+      background: var(--red);
+      color: #fff;
+    }
+
+    .md-toolbar .md-sep {
+      width: 1px;
+      height: 20px;
+      background: var(--line);
+      margin: 0 2px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header class="topbar" id="topbar"></header>
+
+  <section class="write-main">
+    <div class="grid">
+      <div class="write-head">
+        <h1 id="page-title">写文章</h1>
+        <a class="write-back" href="me.html">← 返回个人中心</a>
+      </div>
+
+      <div class="write-form">
+        <div class="reject-tip" id="reject-tip" style="display:none;"></div>
+        <form onsubmit="saveArticle(event)">
+          <div class="field">
+            <label>标题 *</label>
+            <input type="text" id="f-title" required maxlength="200" placeholder="起一个吸引人的标题">
+          </div>
+          <div class="field">
+            <label>分类 *</label>
+            <select id="f-category" required></select>
+          </div>
+          <div class="field">
+            <label>标签（可多选）</label>
+            <div class="tag-pick" id="f-tags"></div>
+            <div class="write-hint">点击标签切换选中，选中标签会以红色高亮</div>
+          </div>
+          <div class="field">
+            <label>摘要
+              <button type="button" class="write-ai-btn" id="btn-ai-summary" onclick="aiSummary(event)"
+                title="AI 根据正文自动生成摘要(50-100字)">AI 摘要</button>
+            </label>
+            <input type="text" id="f-summary" maxlength="500" placeholder="一句话概括文章内容（列表页展示）">
+          </div>
+          <div class="field">
+            <label>封面图 URL</label>
+            <input type="text" id="f-cover" placeholder="可选，例如 /uploads/2026/08/01/xxx.jpg">
+          </div>
+          <div class="field">
+            <label>正文（Markdown / HTML）*
+              <button type="button" class="write-ai-btn" id="btn-ai-polish" onclick="aiPolish(event)"
+                title="AI 润色正文(错别字/语病/表达),流式输出">AI 润色</button>
+              <button type="button" class="write-ai-btn" id="btn-mode-toggle" onclick="toggleEditorMode()"
+                title="切换编辑模式">模式: Markdown</button>
+            </label>
+            <!-- Markdown 工具栏：插入语法到光标处 -->
+            <div class="md-toolbar" id="md-toolbar">
+              <button type="button" data-s="**" data-e="**" data-ph="粗体文字" title="加粗">B</button>
+              <button type="button" data-s="*" data-e="*" data-ph="斜体文字" title="斜体"><i>I</i></button>
+              <button type="button" data-s="~~" data-e="~~" data-ph="删除线" title="删除线">S</button>
+              <span class="md-sep"></span>
+              <button type="button" data-line="## " data-ph="二级标题" title="二级标题">H2</button>
+              <button type="button" data-line="### " data-ph="三级标题" title="三级标题">H3</button>
+              <span class="md-sep"></span>
+              <button type="button" data-line="- " data-ph="列表项" title="无序列表">• 列表</button>
+              <button type="button" data-line="1. " data-ph="列表项" title="有序列表">1. 列表</button>
+              <button type="button" data-line="> " data-ph="引用内容" title="引用">❝ 引用</button>
+              <span class="md-sep"></span>
+              <button type="button" data-s="`" data-e="`" data-ph="行内代码" title="行内代码">&lt;/&gt;</button>
+              <button type="button" data-block="```\n" data-blockend="\n```" data-ph="go" title="代码块">代码块</button>
+              <span class="md-sep"></span>
+              <button type="button" data-s="[" data-e="](https://)" data-ph="链接文字" title="链接">🔗 链接</button>
+              <button type="button" data-s="![" data-e="](图片地址)" data-ph="图片描述" title="图片">🖼 图片</button>
+              <button type="button" data-line="---" title="分割线">— 分割线</button>
+            </div>
+            <textarea id="f-content" required rows="16"
+              placeholder="支持 Markdown：**加粗**、*斜体*、`` `代码` ``、``` 代码块 ```、# 标题…（保存时自动转为 HTML）"></textarea>
+            <div class="write-hint">Markdown 模式：点击上方按钮插入语法；切换为 HTML 模式可编辑原始 HTML 源码</div>
+          </div>
+          <div class="write-actions">
+            <button class="btn-solid" type="submit" id="submit-btn">提交审核</button>
+            <a class="cancel" href="me.html">取消</a>
+            <span class="write-hint" id="submit-hint">投稿后需编辑审核通过才会公开展示</span>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer" id="footer"></footer>
+
+  <script src="js/api.js?v=12"></script>
+  <script src="js/common.js?v=21"></script>
+  <script type="module" src="./src/main-public.jsx"></script>
+  <script>
+    initPage('me');
+
+    // 未登录 → 跳登录
+    const token = localStorage.getItem('accessToken');
+    if (!token) { location.href = 'login.html'; }
+
+    const editId = getParam('id'); // ?id=xxx 表示编辑模式
+    const selectedTags = new Set();
+    let allTags = [];
+    // 编辑模式：'md' = Markdown（保存时自动转 HTML），'html' = 原样 HTML
+    let editorMode = 'md';
+
+    // ==================== Markdown 编辑器 ====================
+    // 工具栏：点击按钮向光标处插入 Markdown 语法
+    // 阻止 mousedown 默认行为：点击按钮时正文 textarea 不失焦，光标/选区保持不变，
+    // 避免选区信息丢失导致插入位置错乱
+    document.getElementById('md-toolbar').addEventListener('mousedown', e => e.preventDefault());
+    document.getElementById('md-toolbar').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      // HTML 模式工具栏禁用：点击给出明确提示，避免"点了没反应"的困惑
+      if (editorMode === 'html') { toast('当前为 HTML 模式，请点击「模式: Markdown」切换后再使用工具栏'); return; }
+      const ta = document.getElementById('f-content');
+      const start = ta.selectionStart, end = ta.selectionEnd;
+      const sel = ta.value.slice(start, end);
+      const ph = btn.dataset.ph || 'text';
+      // 包裹型：**粗体** / *斜体* / `行内代码` / [链接](url)
+      if (btn.dataset.s) {
+        ta.setRangeText(btn.dataset.s + (sel || ph) + btn.dataset.e, start, end, 'end');
+      }
+      // 行首型：## 标题 / - 列表 / > 引用 / --- 分割线
+      else if (btn.dataset.line) {
+        const lineStart = ta.value.lastIndexOf('\n', start - 1) + 1;
+        ta.setRangeText(btn.dataset.line + (sel || ph), lineStart, end, 'end');
+      }
+      // 代码块：```lang\n代码\n```（选中则包住选中内容）
+      else if (btn.dataset.block) {
+        const inner = sel || '代码';
+        ta.setRangeText('```\n' + inner + '\n```', start, end, 'end');
+      }
+      ta.focus();
+    });
+
+    // 切换 Markdown / HTML 编辑模式
+    function toggleEditorMode() {
+      editorMode = editorMode === 'md' ? 'html' : 'md';
+      const btn = document.getElementById('btn-mode-toggle');
+      btn.textContent = '模式: ' + (editorMode === 'md' ? 'Markdown' : 'HTML');
+      document.getElementById('md-toolbar').style.opacity = editorMode === 'md' ? '1' : '.45';
+    }
+
+    // 判断内容是否为 HTML（含明显 HTML 标签）→ 编辑旧文章时自动切 HTML 模式，避免 marked 二次转义
+    function looksLikeHtml(text) {
+      return /<(p|div|pre|h[1-6]|ul|ol|li|table|img|blockquote|code)\b/i.test(text);
+    }
+
+    // 保存前转换：Markdown → HTML（marked）；已是 HTML 则原样
+    function renderContent(raw) {
+      if (editorMode === 'html' || looksLikeHtml(raw)) return raw;
+      if (typeof marked !== 'undefined') {
+        try { return marked.parse(raw); } catch (e) { return raw; }
+      }
+      return raw; // marked 未加载（离线）时原样保存
+    }
+
+    (async function init() {
+      await loadCats();
+      await loadTags();
+      if (editId) await loadArticle(editId);
+    })();
+
+    // 加载分类（公开接口）
+    async function loadCats() {
+      try {
+        const cats = await api.get('/api/categories');
+        document.getElementById('f-category').innerHTML =
+          '<option value="">请选择分类</option>' +
+          cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+      } catch (e) { toast('分类加载失败', true); }
+    }
+
+    // 加载标签（公开接口）并渲染多选 chips
+    async function loadTags() {
+      try {
+        allTags = await api.get('/api/tags');
+        renderTagChips();
+      } catch (e) { toast('标签加载失败', true); }
+    }
+
+    function renderTagChips() {
+      document.getElementById('f-tags').innerHTML = allTags.map(t => `
+    <span class="chip ${selectedTags.has(t.id) ? 'on' : ''}"
+      data-id="${t.id}" onclick="toggleTag(${t.id}, this)">${esc(t.name)}</span>`).join('') ||
+        '<span class="write-hint">暂无标签</span>';
+    }
+
+    function toggleTag(id, el) {
+      if (selectedTags.has(id)) { selectedTags.delete(id); el.classList.remove('on'); }
+      else { selectedTags.add(id); el.classList.add('on'); }
+    }
+
+    // 编辑模式：拉取自己的文章回显
+    async function loadArticle(id) {
+      try {
+        const a = await api.get('/api/my/articles/' + id);
+        document.getElementById('page-title').textContent = '编辑文章';
+        document.getElementById('submit-btn').textContent = '保存修改';
+        document.getElementById('submit-hint').textContent = '保存后需编辑重新审核才会更新公开展示';
+        document.getElementById('f-title').value = a.title;
+        document.getElementById('f-summary').value = a.summary || '';
+        document.getElementById('f-cover').value = a.coverImage || '';
+        document.getElementById('f-content').value = a.content || '';
+        // 旧文章若是 HTML 源码，自动切 HTML 模式，避免保存时 marked 二次转义
+        if (looksLikeHtml(a.content || '')) toggleEditorMode();
+        document.getElementById('f-category').value = a.categoryId || '';
+        (a.tags || []).forEach(t => selectedTags.add(t.id));
+        renderTagChips();
+        // 被驳回的文章：提示原因，鼓励修改重提
+        if (a.status === 3) {
+          const tip = document.getElementById('reject-tip');
+          tip.style.display = 'block';
+          tip.textContent = '你的这篇投稿被驳回了：' + (a.rejectReason || '未填写原因') + '。修改后重新提交即可再次进入审核。';
+        }
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function saveArticle(e) {
+      e.preventDefault();
+      const title = document.getElementById('f-title').value.trim();
+      const categoryId = parseInt(document.getElementById('f-category').value);
+      const payload = {
+        title,
+        summary: document.getElementById('f-summary').value.trim(),
+        coverImage: document.getElementById('f-cover').value.trim(),
+        content: renderContent(document.getElementById('f-content').value),
+        categoryId,
+        tagIds: Array.from(selectedTags),
+        password: '',
+        publishAt: null,
+      };
+      if (!categoryId) { toast('请选择分类', true); return; }
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      try {
+        if (editId) await api.put('/api/my/articles/' + editId, payload);
+        else await api.post('/api/my/articles', payload);
+        toast(editId ? '保存成功' : '投稿成功，等待审核');
+        setTimeout(() => { location.href = 'me.html'; }, 800);
+      } catch (err) {
+        toast(err.message, true);
+        btn.disabled = false;
+      }
+    }
+
+    // AI 生成摘要：新文章正文还没保存（无 articleId），直接把正文发给后端生成
+    async function aiSummary(ev) {
+      const content = document.getElementById('f-content').value.trim();
+      if (!content) { toast('请先填写正文，再生成摘要', true); return; }
+      const btn = ev.currentTarget;
+      const old = btn.textContent;
+      btn.disabled = true; btn.textContent = '生成中…';
+      try {
+        const data = await api.post('/api/ai/summary', { content });
+        document.getElementById('f-summary').value = data.summary || '';
+        toast('AI 摘要已生成，可手动修改');
+      } catch (e) { toast(e.message, true); }
+      finally { btn.disabled = false; btn.textContent = old; }
+    }
+
+    // AI 润色：正文发给后端，流式替换编辑器内容（打字机效果）
+    async function aiPolish(ev) {
+      const ta = document.getElementById('f-content');
+      const content = ta.value.trim();
+      if (!content) { toast('正文为空，请先填写内容', true); return; }
+      const btn = ev.currentTarget;
+      const old = btn.textContent;
+      btn.disabled = true; btn.textContent = '润色中…';
+      const orig = ta.value; // 备份，失败可恢复
+      let started = false; // 收到首个 AI 结果后才清空原文，防止请求异常时正文丢失
+      try {
+        await streamRequest('/api/ai/polish', { content },
+          d => { if (!started) { ta.value = ''; started = true; } ta.value += d; },
+          () => toast('润色完成，检查后保存'));
+      } catch (e) { if (started) ta.value = orig; toast(e.message, true); }
+      finally { btn.disabled = false; btn.textContent = old; }
+    }
+  </script>
+</body>
+
+</html>

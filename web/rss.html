@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RSS 订阅 — LUMI</title>
+  <meta name="description" content="通过 RSS 订阅博客更新,不错过任何新文章。">
+  <link rel="alternate" type="application/rss+xml" title="LUMI 博客" href="/api/rss.xml">
+  <link rel="stylesheet" href="css/style.css?v=28">
+  <style>
+    .rss-body {
+      padding: 52px 0 80px;
+    }
+
+    .rss-card {
+      border: 2px solid var(--ink);
+      background: var(--white);
+      padding: 28px;
+      margin-bottom: 24px;
+      position: relative;
+    }
+
+    .rss-card::after {
+      content: "";
+      position: absolute;
+      right: 12px;
+      top: 12px;
+      width: 14px;
+      height: 14px;
+      background: var(--red);
+    }
+
+    .rss-card h2 {
+      font-size: 18px;
+      letter-spacing: .06em;
+      margin-bottom: 14px;
+    }
+
+    .rss-card p {
+      font-size: 15px;
+      line-height: 1.9;
+      color: var(--gray-6);
+      margin-bottom: 12px;
+    }
+
+    .rss-feed {
+      display: flex;
+      gap: 0;
+      margin: 18px 0 14px;
+    }
+
+    .rss-feed input {
+      flex: 1;
+      border: 1px solid var(--ink);
+      border-right: none;
+      background: var(--paper);
+      padding: 12px 14px;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--ink);
+      outline: none;
+      min-width: 0;
+    }
+
+    .rss-feed button {
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: var(--paper);
+      padding: 0 20px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background .15s ease, transform .15s ease;
+    }
+
+    .rss-feed button:hover {
+      background: var(--red);
+      transform: translateY(-1px);
+    }
+
+    .rss-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .rss-actions a,
+    .rss-actions button {
+      display: inline-block;
+      border: 1px solid var(--ink);
+      background: var(--white);
+      padding: 10px 18px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all .15s ease;
+    }
+
+    .rss-actions a:hover,
+    .rss-actions button:hover {
+      background: var(--ink);
+      color: var(--paper);
+      transform: translateY(-1px);
+    }
+
+    .rss-tools {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 6px;
+    }
+
+    .rss-tools a {
+      border: 1px solid var(--line);
+      padding: 14px 16px;
+      font-size: 13px;
+      transition: all .15s ease;
+    }
+
+    .rss-tools a b {
+      display: block;
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .rss-tools a:hover {
+      border-color: var(--red);
+      color: var(--red);
+      transform: translateY(-2px);
+    }
+
+    .rss-tools a span {
+      color: var(--gray-a);
+      font-size: 12px;
+    }
+
+    @media (max-width: 640px) {
+      .rss-tools {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <header class="topbar" id="topbar"></header>
+
+  <section class="page-hero">
+    <div class="grid">
+      <div class="crumb"><a href="index.html">Home</a> / <span>RSS</span></div>
+      <h1>RSS 订阅</h1>
+      <div class="sub">RSS FEED</div>
+    </div>
+  </section>
+
+  <section class="rss-body">
+    <div class="grid">
+      <div class="main" style="grid-column:1/9;">
+        <div class="rss-card">
+          <h2>什么是 RSS？</h2>
+          <p>RSS（Really Simple Syndication）是一种标准的内容订阅格式。把本站的订阅地址加入你的阅读器后，<b>新文章发布时会自动推送</b>，无需每天手动打开博客，也不会被算法推荐打扰。</p>
+          <p>本站订阅源使用标准 RSS 2.0 格式，包含文章标题、链接、摘要与发布时间，兼容几乎所有的 RSS 阅读器。</p>
+        </div>
+
+        <div class="rss-card">
+          <h2>订阅地址</h2>
+          <div class="rss-feed">
+            <input id="rss-url" readonly value="/api/rss.xml" onfocus="this.select()">
+            <button type="button" onclick="copyRssUrl()">复制</button>
+          </div>
+          <div class="rss-actions">
+            <a href="/api/rss.xml" target="_blank" rel="noopener">打开订阅源 →</a>
+            <button type="button" onclick="subscribeTip()">如何添加订阅？</button>
+          </div>
+        </div>
+
+        <div class="rss-card">
+          <h2>推荐订阅工具</h2>
+          <p>以下工具都可以添加本站订阅源，选择你习惯的即可。</p>
+          <div class="rss-tools">
+            <a href="https://feedly.com" target="_blank" rel="noopener"><b>Feedly</b><span>老牌云端阅读器，全平台同步</span></a>
+            <a href="https://www.inoreader.com" target="_blank"
+              rel="noopener"><b>Inoreader</b><span>功能强大，支持规则与离线</span></a>
+            <a href="https://rss.qq.com" target="_blank" rel="noopener"><b>QQ 邮箱</b><span>打开「阅读空间」直接订阅</span></a>
+          </div>
+        </div>
+      </div>
+
+      <aside class="side" style="grid-column:9/13;">
+        <h2>订阅须知</h2>
+        <ul class="skill-list">
+          <li>订阅免费，无需注册</li>
+          <li>新文章发布后自动推送</li>
+          <li>源地址固定，不会变动</li>
+          <li>支持在浏览器中直接查看</li>
+        </ul>
+        <h2 style="margin-top:24px;">其他方式</h2>
+        <ul class="contact-list">
+          <li><a href="articles.html">浏览全部文章 →</a></li>
+          <li><a href="about.html">关于本站 →</a></li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <footer class="footer" id="footer"></footer>
+
+  <script src="js/api.js?v=11"></script>
+  <script src="js/common.js?v=21"></script>
+  <script type="module" src="./src/main-public.jsx"></script>
+  <script>
+    function copyRssUrl() {
+      const input = document.getElementById('rss-url');
+      const url = 'https://' + location.host + input.value;
+      navigator.clipboard.writeText(url).then(() => {
+        toast('订阅地址已复制');
+      }).catch(() => {
+        input.select();
+        document.execCommand('copy');
+        toast('订阅地址已复制');
+      });
+    }
+    function subscribeTip() {
+      toast('将上面的订阅地址粘贴到任意 RSS 阅读器即可');
+    }
+    initPage('rss');
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,20 @@
+{
+  "name": "blog-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "博客前台多页面(MPA)工程：原生 HTML/CSS/JS + React 公共组件，Vite 构建",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}

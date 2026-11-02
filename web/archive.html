@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>时间归档 — LUMI</title>
+  <meta name="description" content="按时间归档浏览全部文章。">
+  <link rel="stylesheet" href="css/style.css?v=28">
+</head>
+
+<body>
+
+  <header class="topbar" id="topbar"></header>
+
+  <section class="page-hero">
+    <div class="grid">
+      <div class="crumb"><a href="index.html">Home</a> / <span>Archive</span></div>
+      <h1>时间归档</h1>
+      <div class="sub">TIMELINE</div>
+    </div>
+  </section>
+
+  <section class="archive-list">
+    <div class="grid">
+      <div class="loading" id="arc-loading" style="grid-column:1/13">加载中…</div>
+      <div id="arc-wrap"></div>
+    </div>
+  </section>
+
+  <footer class="footer" id="footer"></footer>
+
+  <script src="js/api.js?v=11"></script>
+  <script src="js/common.js?v=21"></script>
+  <script type="module" src="./src/main-public.jsx"></script>
+  <script>
+    initPage('archive').then(loadArchive);
+
+    async function loadArchive() {
+      const wrap = document.getElementById('arc-wrap');
+      try {
+        const groups = await api.get('/api/archive');
+        document.getElementById('arc-loading').style.display = 'none';
+        if (!groups || !groups.length) { wrap.innerHTML = '<div class="empty" style="grid-column:1/13">暂无文章</div>'; return; }
+        wrap.innerHTML = groups.map(g => `
+      <div class="archive-group">
+        <div class="yr">${g.year}<span class="n">${g.articles.length} 篇</span></div>
+        ${g.articles.map(a => `
+          <a class="archive-item" href="article.html?id=${a.id}">
+            <span class="date">${fmtDate(a.createdAt)}</span>
+            <span class="t">${esc(a.title)}</span>
+          </a>`).join('')}
+      </div>`).join('');
+      } catch (e) {
+        wrap.innerHTML = `<div class="empty" style="grid-column:1/13">加载失败: ${esc(e.message)}</div>`;
+      }
+    }
+  </script>
+</body>
+
+</html>

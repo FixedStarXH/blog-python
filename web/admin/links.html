@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>友情链接 — 后台</title>
+  <link rel="stylesheet" href="../css/admin.css?v=19">
+</head>
+
+<body>
+  <div class="admin-wrap">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main">
+      <div class="main-header">
+        <h1>友情链接</h1>
+        <button class="btn primary" onclick="openForm()">+ 添加链接</button>
+      </div>
+      <div class="panel">
+        <div class="panel-body" style="padding:0;">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>站点名</th>
+                <th>URL</th>
+                <th>描述</th>
+                <th>排序</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="form-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000;">
+    <div style="max-width:560px;margin:100px auto;background:#fff;border:2px solid #1A1915;padding:32px;">
+      <div
+        style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #1A1915;padding-bottom:14px;">
+        <h2 style="font-size:18px;font-weight:900;" id="form-title">添加链接</h2>
+        <button class="btn sm" onclick="closeForm()">关闭 ✕</button>
+      </div>
+      <form onsubmit="save(event)">
+        <input type="hidden" id="l-id">
+        <div class="form-grid">
+          <div class="field"><label>站点名</label><input type="text" id="l-name" required maxlength="100"></div>
+          <div class="field"><label>URL</label><input type="url" id="l-url" required maxlength="255"
+              placeholder="https://…"></div>
+          <div class="field full"><label>描述</label><input type="text" id="l-desc" maxlength="255"></div>
+          <div class="field"><label>排序</label><input type="number" id="l-sort" value="0"></div>
+          <div class="field check" style="align-self:end;padding-bottom:12px;">
+            <input type="checkbox" id="l-enabled" checked>
+            <label for="l-enabled" style="margin:0;">前台展示</label>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn primary" type="submit">保存</button>
+          <button class="btn" type="button" onclick="closeForm()">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="../js/api.js?v=8"></script>
+  <script src="../js/admin-common.js?v=11"></script>
+  <script>
+    initAdmin('links');
+    let editingId = null;
+
+    async function reload() {
+      try {
+        const list = await api.get('/api/admin/links');
+        document.getElementById('tbody').innerHTML = list.map(l => `
+      <tr>
+        <td>${l.id}</td>
+        <td><b>${esc(l.name)}</b></td>
+        <td><a href="${esc(l.url)}" target="_blank" style="color:var(--red);">${esc(l.url)}</a></td>
+        <td>${esc(l.description || '-')}</td>
+        <td>${l.sort ?? 0}</td>
+        <td>${l.enabled ? '<span class="badge green">展示中</span>' : '<span class="badge gray">停用</span>'}</td>
+        <td class="actions">
+          <button class="btn sm" onclick='edit(${JSON.stringify(l).replace(/'/g, "\\'")})'>编辑</button>
+          <button class="btn sm danger" onclick="del(${l.id})">删除</button>
+        </td>
+      </tr>`).join('') || '<tr><td colspan="7"><div class="empty">暂无链接</div></td></tr>';
+      } catch (e) { toast(e.message, true); }
+    }
+
+    function openForm() {
+      editingId = null;
+      document.getElementById('form-title').textContent = '添加链接';
+      document.getElementById('l-id').value = '';
+      ['l-name', 'l-url', 'l-desc'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('l-sort').value = '0';
+      document.getElementById('l-enabled').checked = true;
+      document.getElementById('form-modal').style.display = 'block';
+    }
+
+    function edit(l) {
+      editingId = l.id;
+      document.getElementById('form-title').textContent = '编辑链接 #' + l.id;
+      document.getElementById('l-id').value = l.id;
+      document.getElementById('l-name').value = l.name;
+      document.getElementById('l-url').value = l.url;
+      document.getElementById('l-desc').value = l.description || '';
+      document.getElementById('l-sort').value = l.sort || 0;
+      document.getElementById('l-enabled').checked = !!l.enabled;
+      document.getElementById('form-modal').style.display = 'block';
+    }
+
+    function closeForm() { document.getElementById('form-modal').style.display = 'none'; }
+
+    async function save(e) {
+      e.preventDefault();
+      const payload = {
+        name: document.getElementById('l-name').value.trim(),
+        url: document.getElementById('l-url').value.trim(),
+        description: document.getElementById('l-desc').value.trim(),
+        sort: parseInt(document.getElementById('l-sort').value || '0'),
+        enabled: document.getElementById('l-enabled').checked,
+      };
+      try {
+        if (editingId) await api.put('/api/admin/links/' + editingId, payload);
+        else await api.post('/api/admin/links', payload);
+        toast('保存成功');
+        closeForm();
+        reload();
+      } catch (err) { toast(err.message, true); }
+    }
+
+    async function del(id) {
+      if (!confirm('确定删除该链接?')) return;
+      try {
+        await api.del('/api/admin/links/' + id);
+        toast('已删除');
+        reload();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    reload();
+  </script>
+</body>
+
+</html>

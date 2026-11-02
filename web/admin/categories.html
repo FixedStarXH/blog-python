@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>分类管理 — 后台</title>
+  <link rel="stylesheet" href="../css/admin.css?v=19">
+</head>
+
+<body>
+  <div class="admin-wrap">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main">
+      <div class="main-header">
+        <h1>分类管理</h1>
+        <button class="btn primary" onclick="openForm()">+ 新建分类</button>
+      </div>
+      <div class="panel">
+        <div class="panel-body" style="padding:0;">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>名称</th>
+                <th>描述</th>
+                <th>文章数</th>
+                <th>排序</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="form-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000;">
+    <div style="max-width:520px;margin:100px auto;background:#fff;border:2px solid #1A1915;padding:32px;">
+      <div
+        style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #1A1915;padding-bottom:14px;">
+        <h2 style="font-size:18px;font-weight:900;" id="form-title">新建分类</h2>
+        <button class="btn sm" onclick="closeForm()">关闭 ✕</button>
+      </div>
+      <form onsubmit="save(event)">
+        <input type="hidden" id="c-id">
+        <div class="form-grid" style="grid-template-columns:1fr;">
+          <div class="field"><label>名称</label><input type="text" id="c-name" required maxlength="50"></div>
+          <div class="field"><label>描述</label><input type="text" id="c-desc" maxlength="200"></div>
+          <div class="field"><label>排序号(小的在前)</label><input type="number" id="c-sort" value="0"></div>
+        </div>
+        <div class="form-actions">
+          <button class="btn primary" type="submit">保存</button>
+          <button class="btn" type="button" onclick="closeForm()">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="../js/api.js?v=8"></script>
+  <script src="../js/admin-common.js?v=11"></script>
+  <script>
+    initAdmin('categories');
+    let editingId = null;
+
+    async function reload() {
+      try {
+        const list = await api.get('/api/admin/categories');
+        document.getElementById('tbody').innerHTML = list.map(c => `
+      <tr>
+        <td>${c.id}</td>
+        <td><b>${esc(c.name)}</b></td>
+        <td>${esc(c.description || '-')}</td>
+        <td>${c.articleCount ?? 0}</td>
+        <td>${c.sort ?? 0}</td>
+        <td class="actions">
+          <button class="btn sm" onclick='edit(${JSON.stringify(c).replace(/'/g, "\\'")})'>编辑</button>
+          <button class="btn sm danger" onclick="del(${c.id})">删除</button>
+        </td>
+      </tr>`).join('') || '<tr><td colspan="6"><div class="empty">暂无分类</div></td></tr>';
+      } catch (e) { toast(e.message, true); }
+    }
+
+    function openForm() {
+      editingId = null;
+      document.getElementById('form-title').textContent = '新建分类';
+      document.getElementById('c-id').value = '';
+      document.getElementById('c-name').value = '';
+      document.getElementById('c-desc').value = '';
+      document.getElementById('c-sort').value = '0';
+      document.getElementById('form-modal').style.display = 'block';
+    }
+
+    function edit(c) {
+      editingId = c.id;
+      document.getElementById('form-title').textContent = '编辑分类 #' + c.id;
+      document.getElementById('c-id').value = c.id;
+      document.getElementById('c-name').value = c.name;
+      document.getElementById('c-desc').value = c.description || '';
+      document.getElementById('c-sort').value = c.sort || 0;
+      document.getElementById('form-modal').style.display = 'block';
+    }
+
+    function closeForm() { document.getElementById('form-modal').style.display = 'none'; }
+
+    async function save(e) {
+      e.preventDefault();
+      const payload = {
+        name: document.getElementById('c-name').value.trim(),
+        description: document.getElementById('c-desc').value.trim(),
+        sort: parseInt(document.getElementById('c-sort').value || '0'),
+      };
+      try {
+        if (editingId) await api.put('/api/admin/categories/' + editingId, payload);
+        else await api.post('/api/admin/categories', payload);
+        toast('保存成功');
+        closeForm();
+        reload();
+      } catch (err) { toast(err.message, true); }
+    }
+
+    async function del(id) {
+      if (!confirm('确定删除该分类?')) return;
+      try {
+        await api.del('/api/admin/categories/' + id);
+        toast('已删除');
+        reload();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    reload();
+  </script>
+</body>
+
+</html>

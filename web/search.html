@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>搜索 — LUMI</title>
+  <meta name="description" content="搜索博客文章。">
+  <link rel="stylesheet" href="css/style.css?v=28">
+</head>
+
+<body>
+
+  <header class="topbar" id="topbar"></header>
+
+  <section class="page-hero">
+    <div class="grid">
+      <div class="crumb"><a href="index.html">Home</a> / <span>Search</span></div>
+      <h1>搜索文章</h1>
+      <div class="sub">SEARCH</div>
+      <form class="searchbar" id="search-form" style="grid-column:1/13; margin-top:28px;">
+        <input type="text" id="search-input" placeholder="输入关键词,搜索标题与正文…" autocomplete="off">
+        <button type="submit">→</button>
+      </form>
+    </div>
+  </section>
+
+  <main class="directory" style="border-bottom:none;">
+    <div class="grid">
+      <!-- 结果统计 + 排序 -->
+      <div class="search-meta-bar" id="search-meta-bar" style="display:none;">
+        <div class="search-summary">
+          关键词「<b id="search-kw"></b>」共找到 <b id="search-count">0</b> 条结果
+          <span class="search-cost" id="search-cost"></span>
+        </div>
+        <div class="search-sort">
+          <a href="#" class="sort-btn" data-sort="latest">最新</a>
+          <a href="#" class="sort-btn" data-sort="hot">最热</a>
+        </div>
+      </div>
+
+      <!-- 搜索历史快捷入口（无结果或初始态显示） -->
+      <div class="search-quick" id="search-quick" style="grid-column:1/13;">
+        <div class="search-quick-section">
+          <div class="search-quick-title">最近搜索 <button class="search-hint-clear"
+              onclick="clearSearchHistory();renderQuickHistory()">清空</button></div>
+          <div class="search-tags" id="quick-history"></div>
+        </div>
+      </div>
+
+      <div class="loading" id="search-loading" style="grid-column:1/13; display:none;">搜索中…</div>
+
+      <!-- 搜索结果列表 -->
+      <div id="search-list"></div>
+
+      <!-- 空状态 -->
+      <div class="search-empty-state" id="search-empty" style="display:none;">
+        <div class="ses-icon">⌕</div>
+        <h3>没有找到相关文章</h3>
+        <p>试试更换关键词,或减少限制条件</p>
+        <div class="ses-suggest">
+          <span>热门标签：</span>
+          <span id="ses-tags"></span>
+        </div>
+      </div>
+
+      <div class="pagination" id="pagination"></div>
+    </div>
+  </main>
+
+  <footer class="footer" id="footer"></footer>
+
+  <script src="js/api.js?v=11"></script>
+  <script src="js/common.js?v=21"></script>
+  <script type="module" src="./src/main-public.jsx"></script>
+  <script>
+    initPage('archive').then(initSearch);
+
+    let curQuery = '';
+    let curSort = 'latest';
+    let curPage = 1;
+    const pageSize = 10;
+
+    function initSearch() {
+      const q = getParam('q');
+      const sort = getParam('sort') || 'latest';
+      curSort = sort;
+      const input = document.getElementById('search-input');
+
+      // 排序按钮
+      document.querySelectorAll('.sort-btn').forEach(btn => {
+        btn.style.fontWeight = btn.dataset.sort === sort ? '700' : '400';
+        btn.style.color = btn.dataset.sort === sort ? 'var(--red)' : 'var(--gray-a)';
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          curSort = btn.dataset.sort;
+          document.querySelectorAll('.sort-btn').forEach(b => {
+            b.style.fontWeight = b.dataset.sort === curSort ? '700' : '400';
+            b.style.color = b.dataset.sort === curSort ? 'var(--red)' : 'var(--gray-a)';
+          });
+          if (curQuery) { curPage = 1; doSearch(); }
+        });
+      });
+
+      // 表单提交
+      document.getElementById('search-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const val = input.value.trim();
+        if (!val) return toast('请输入搜索关键词', true);
+        curQuery = val;
+        curPage = 1;
+        // 更新 URL（不刷新页面，方便分享/刷新保留）
+        const u = new URL(location.href);
+        u.searchParams.set('q', val);
+        u.searchParams.set('sort', curSort);
+        history.replaceState(null, '', u.toString());
+        saveSearchHistory(val);
+        doSearch();
+      });
+
+      // 渲染快捷历史
+      renderQuickHistory();
+      loadSuggestTags();
+
+      if (q) {
+        input.value = q;
+        curQuery = q;
+        doSearch();
+      }
+    }
+
+    function renderQuickHistory() {
+      const wrap = document.getElementById('quick-history');
+      const section = wrap.closest('.search-quick-section');
+      const list = getSearchHistory();
+      if (!list.length) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = '';
+      wrap.innerHTML = list.map(q =>
+        `<a class="tag-item" href="javascript:;" onclick="document.getElementById('search-input').value=${esc(JSON.stringify(q))};document.getElementById('search-form').dispatchEvent(new Event('submit'))"># ${esc(q)}</a>`
+      ).join('');
+    }
+
+    async function loadSuggestTags() {
+      try {
+        const tags = await api.get('/api/tags');
+        const sorted = (tags || []).sort((a, b) => (b.articleCount || 0) - (a.articleCount || 0)).slice(0, 8);
+        const el = document.getElementById('ses-tags');
+        if (el) {
+          el.innerHTML = sorted.map(t =>
+            `<a class="tag-item" href="articles.html?tag=${encodeURIComponent(t.name)}">${esc(t.name)}</a>`
+          ).join('');
+        }
+      } catch (e) { }
+    }
+
+    async function doSearch() {
+      const loading = document.getElementById('search-loading');
+      const listEl = document.getElementById('search-list');
+      const emptyEl = document.getElementById('search-empty');
+      const metaBar = document.getElementById('search-meta-bar');
+      const quick = document.getElementById('search-quick');
+
+      loading.style.display = '';
+      listEl.innerHTML = '';
+      emptyEl.style.display = 'none';
+      metaBar.style.display = 'none';
+      quick.style.display = 'none';
+
+      const t0 = performance.now();
+      try {
+        const data = await api.get('/api/articles?keyword=' + encodeURIComponent(curQuery) +
+          '&page=' + curPage + '&pageSize=' + pageSize + '&sort=' + curSort);
+        const cost = Math.round(performance.now() - t0);
+
+        loading.style.display = 'none';
+        metaBar.style.display = 'flex';
+        document.getElementById('search-kw').textContent = curQuery;
+        document.getElementById('search-count').textContent = data.total;
+        document.getElementById('search-cost').textContent = '（耗时 ' + cost + 'ms）';
+
+        if (!data.list || !data.list.length) {
+          emptyEl.style.display = '';
+          renderPagination(0);
+          return;
+        }
+
+        listEl.innerHTML = data.list.map((a, i) => {
+          // 摘要：去掉 HTML 标签，截取匹配关键词附近文本
+          const plainContent = (a.content || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          const summary = a.summary || extractSnippet(plainContent, curQuery, 120);
+          return `
+          <a class="search-card" href="article.html?id=${a.id}">
+            <div class="sc-num">${String((curPage - 1) * pageSize + i + 1).padStart(3, '0')}</div>
+            <div class="sc-body">
+              <div class="sc-head">
+                <span class="sc-cat">${esc(a.category?.name || '未分类')}</span>
+                <span class="sc-title">${highlightKeyword(esc(a.title), curQuery)}</span>
+              </div>
+              <p class="sc-summary">${highlightKeyword(esc(summary), curQuery)}</p>
+              <div class="sc-meta">
+                <span>${esc(a.author?.nickname || '匿名')}</span>
+                <span class="sep">·</span>
+                <span>${fmtDate(a.createdAt)}</span>
+                <span class="sep">·</span>
+                <span>${fmtNum(a.viewCount)} 阅读</span>
+                <span class="sep">·</span>
+                <span>♡ ${a.likeCount || 0}</span>
+                ${(a.tags && a.tags.length) ? `<span class="sep">·</span><span class="sc-tags">${a.tags.map(t => '#' + esc(t.name)).join(' ')}</span>` : ''}
+              </div>
+            </div>
+            <div class="sc-arrow">→</div>
+          </a>`;
+        }).join('');
+
+        renderPagination(data.total);
+      } catch (e) {
+        loading.style.display = 'none';
+        listEl.innerHTML = `<div class="empty" style="grid-column:1/13">搜索失败: ${esc(e.message)}</div>`;
+      }
+    }
+
+    // 摘要提取：找到关键词首次出现位置,截取前后文
+    function extractSnippet(text, keyword, maxLen) {
+      if (!text) return '';
+      const idx = text.toLowerCase().indexOf(keyword.toLowerCase());
+      if (idx === -1) return text.slice(0, maxLen) + (text.length > maxLen ? '…' : '');
+      const half = Math.floor((maxLen - keyword.length) / 2);
+      const start = Math.max(0, idx - half);
+      const end = Math.min(text.length, idx + keyword.length + half);
+      return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '');
+    }
+
+    function renderPagination(total) {
+      const wrap = document.getElementById('pagination');
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      if (totalPages <= 1) { wrap.innerHTML = ''; return; }
+
+      const btn = (label, page, cls = '') => {
+        return `<a href="javascript:;" class="${cls}" onclick="goPage(${page})">${label}</a>`;
+      };
+
+      let html = '';
+      html += btn('←', Math.max(1, curPage - 1), curPage <= 1 ? 'disabled' : '');
+      // 页码窗口
+      const win = 2;
+      const s = Math.max(1, curPage - win);
+      const e = Math.min(totalPages, curPage + win);
+      if (s > 1) html += btn('1', 1);
+      if (s > 2) html += '<span class="dots">…</span>';
+      for (let i = s; i <= e; i++) {
+        html += btn(String(i), i, i === curPage ? 'active' : '');
+      }
+      if (e < totalPages - 1) html += '<span class="dots">…</span>';
+      if (e < totalPages) html += btn(String(totalPages), totalPages);
+      html += btn('→', Math.min(totalPages, curPage + 1), curPage >= totalPages ? 'disabled' : '');
+      wrap.innerHTML = html;
+    }
+
+    function goPage(p) {
+      curPage = p;
+      doSearch();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  </script>
+</body>
+
+</html>

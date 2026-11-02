@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文章管理 — 后台</title>
+  <link rel="stylesheet" href="../css/admin.css?v=19">
+  <!-- Markdown 解析：保存时把 Markdown 转 HTML -->
+  <script src="../js/marked.min.js"></script>
+</head>
+
+<body>
+  <div class="admin-wrap">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main">
+      <div class="main-header">
+        <h1>文章管理</h1>
+        <button class="btn primary" onclick="openForm()">+ 新建文章</button>
+      </div>
+
+      <div class="toolbar">
+        <input type="search" id="f-keyword" placeholder="搜索标题…">
+        <select id="f-status">
+          <option value="-1">全部状态</option>
+          <option value="1">已发布</option>
+          <option value="0">草稿</option>
+          <option value="2">待审核</option>
+          <option value="3">已驳回</option>
+          <option value="4">已排期</option>
+        </select>
+        <select id="f-cat">
+          <option value="">全部分类</option>
+        </select>
+        <button class="btn sm" onclick="reload(1)">筛选</button>
+      </div>
+
+      <!-- 批量操作工具条：勾选后才显示，复用 comments.html 的设计 -->
+      <div class="batch-bar" id="batch-bar" style="display:none;">
+        <span class="batch-count">已选 <b id="batch-count">0</b> 篇</span>
+        <button class="btn sm primary" onclick="batchOp('publish')">批量发布</button>
+        <button class="btn sm" onclick="batchOp('draft')">转为草稿</button>
+        <button class="btn sm" onclick="batchOp('top')">批量置顶</button>
+        <button class="btn sm" onclick="batchOp('untop')">取消置顶</button>
+        <button class="btn sm danger" onclick="batchOp('delete')">批量删除</button>
+        <button class="btn sm" onclick="clearSelection()">取消选择</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-body" style="padding:0;">
+          <table class="data table-articles">
+            <thead>
+              <tr>
+                <th style="width:40px;"><input type="checkbox" id="check-all" onchange="toggleAll(this)"></th>
+                <th>ID</th>
+                <th>标题</th>
+                <th>分类</th>
+                <th>状态</th>
+                <th>置顶</th>
+                <th>阅读</th>
+                <th>发布时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </main>
+  </div>
+
+  <!-- 新建/编辑表单 -->
+  <div id="form-modal"
+    style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000;overflow-y:auto;">
+    <div style="max-width:820px;margin:40px auto;background:#fff;border:2px solid #1A1915;padding:32px;">
+      <div
+        style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;border-bottom:2px solid #1A1915;padding-bottom:14px;">
+        <h2 style="font-size:20px;font-weight:900;" id="form-title">新建文章</h2>
+        <button class="btn sm" onclick="closeForm()">关闭 ✕</button>
+      </div>
+      <form onsubmit="saveArticle(event)">
+        <input type="hidden" id="a-id">
+        <div class="form-grid">
+          <div class="field full">
+            <label>标题</label>
+            <input type="text" id="a-title" required maxlength="200">
+          </div>
+          <div class="field">
+            <label>分类</label>
+            <select id="a-categoryId" required></select>
+          </div>
+          <div class="field">
+            <label>状态</label>
+            <select id="a-status">
+              <option value="1">已发布</option>
+              <option value="0">草稿</option>
+            </select>
+          </div>
+          <div class="field full">
+            <label>摘要
+              <button type="button" class="btn ai-btn" id="btn-ai-summary" onclick="aiSummary(event)"
+                title="AI 根据正文自动生成摘要(50-100字)">AI 摘要</button>
+            </label>
+            <input type="text" id="a-summary" maxlength="500" placeholder="文章摘要(列表展示)">
+          </div>
+          <div class="field full">
+            <label>封面图 URL</label>
+            <input type="text" id="a-coverImage" placeholder="/uploads/2026/08/01/xxx.jpg">
+          </div>
+          <div class="field full">
+            <label>正文内容(Markdown / HTML)
+              <button type="button" class="btn ai-btn" id="btn-ai-polish" onclick="aiPolish(event)"
+                title="AI 润色正文(错别字/语病/表达),流式输出">AI 润色</button>
+              <button type="button" class="btn ai-btn" id="btn-mode-toggle" onclick="toggleEditorMode()"
+                title="切换编辑模式">模式: Markdown</button>
+            </label>
+            <!-- Markdown 工具栏：插入语法到光标处 -->
+            <div class="md-toolbar" id="md-toolbar">
+              <button type="button" data-s="**" data-e="**" data-ph="粗体文字" title="加粗">B</button>
+              <button type="button" data-s="*" data-e="*" data-ph="斜体文字" title="斜体"><i>I</i></button>
+              <button type="button" data-s="~~" data-e="~~" data-ph="删除线" title="删除线">S</button>
+              <span class="md-sep"></span>
+              <button type="button" data-line="## " data-ph="二级标题" title="二级标题">H2</button>
+              <button type="button" data-line="### " data-ph="三级标题" title="三级标题">H3</button>
+              <span class="md-sep"></span>
+              <button type="button" data-line="- " data-ph="列表项" title="无序列表">• 列表</button>
+              <button type="button" data-line="1. " data-ph="列表项" title="有序列表">1. 列表</button>
+              <button type="button" data-line="> " data-ph="引用内容" title="引用">❝ 引用</button>
+              <span class="md-sep"></span>
+              <button type="button" data-s="`" data-e="`" data-ph="行内代码" title="行内代码">&lt;/&gt;</button>
+              <button type="button" data-block="1" data-ph="go" title="代码块">代码块</button>
+              <span class="md-sep"></span>
+              <button type="button" data-s="[" data-e="](https://)" data-ph="链接文字" title="链接">🔗 链接</button>
+              <button type="button" data-s="![" data-e="](图片地址)" data-ph="图片描述" title="图片">🖼 图片</button>
+              <button type="button" data-line="---" title="分割线">— 分割线</button>
+            </div>
+            <textarea id="a-content" required
+              placeholder="支持 Markdown：**加粗**、*斜体*、`代码`、``` 代码块 ```、# 标题…（保存时自动转为 HTML）"></textarea>
+          </div>
+          <div class="field">
+            <label>标签(ID,逗号分隔)</label>
+            <input type="text" id="a-tagIds" placeholder="1,3,5">
+          </div>
+          <div class="field">
+            <label>定时发布时间</label>
+            <input type="datetime-local" id="a-publishAt">
+          </div>
+          <div class="field">
+            <label>私密密码(留空=公开)</label>
+            <input type="text" id="a-password" placeholder="留空则公开">
+          </div>
+          <div class="field check">
+            <input type="checkbox" id="a-isTop">
+            <label for="a-isTop" style="margin:0;">设为置顶(首页头条优先)</label>
+          </div>
+          <div class="field check">
+            <input type="checkbox" id="a-isFeatured">
+            <label for="a-isFeatured" style="margin:0;">设为首页精选(显示在首页推荐区)</label>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn primary" type="submit">保存</button>
+          <button class="btn" type="button" onclick="closeForm()">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="../js/api.js?v=9"></script>
+  <script src="../js/admin-common.js?v=11"></script>
+  <script>
+    initAdmin('articles');
+
+    let page = 1;
+    const pageSize = 10;
+    // 批量选择：用 Set 存当前页勾选的 ID（跨页不保留，避免误操作大批量数据）
+    const selected = new Set();
+
+    // 刷新选中状态：渲染行后调用，同步 checkbox 显示
+    function syncSelection() {
+      document.querySelectorAll('.row-check').forEach(cb => {
+        cb.checked = selected.has(parseInt(cb.dataset.id));
+      });
+      const count = selected.size;
+      document.getElementById('batch-bar').style.display = count > 0 ? 'flex' : 'none';
+      document.getElementById('batch-count').textContent = count;
+      // 全选框：当前页全部勾选才打勾
+      const rowChecks = document.querySelectorAll('.row-check');
+      const allBox = document.getElementById('check-all');
+      if (rowChecks.length === 0) { allBox.checked = false; return; }
+      allBox.checked = Array.from(rowChecks).every(cb => cb.checked);
+    }
+
+    // 单行勾选
+    function toggleRow(id, checked) {
+      if (checked) selected.add(id); else selected.delete(id);
+      syncSelection();
+    }
+
+    // 全选/全不选（仅当前页）
+    function toggleAll(box) {
+      document.querySelectorAll('.row-check').forEach(cb => {
+        cb.checked = box.checked;
+        const id = parseInt(cb.dataset.id);
+        if (box.checked) selected.add(id); else selected.delete(id);
+      });
+      syncSelection();
+    }
+
+    function clearSelection() {
+      selected.clear();
+      syncSelection();
+    }
+
+    // 批量操作：publish/draft/top/untop/delete
+    async function batchOp(action) {
+      const ids = Array.from(selected);
+      if (!ids.length) return toast('请先勾选文章', true);
+      const verbMap = { publish: '发布', draft: '转为草稿', top: '置顶', untop: '取消置顶', delete: '删除' };
+      if (!confirm(`确定要批量${verbMap[action] || action} ${ids.length} 篇文章?`)) return;
+      try {
+        const d = await api.post('/api/admin/articles/batch', { ids, action });
+        toast(`操作成功，影响 ${d.affected} 篇`);
+        selected.clear();
+        reload();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function loadCatsForFilter() {
+      try {
+        const cats = await api.get('/api/admin/categories');
+        document.getElementById('f-cat').innerHTML = '<option value="">全部分类</option>' +
+          cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+      } catch (e) { }
+    }
+    async function loadCatsForForm() {
+      try {
+        const cats = await api.get('/api/admin/categories');
+        document.getElementById('a-categoryId').innerHTML =
+          cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+      } catch (e) { toast('分类加载失败', true); }
+    }
+
+    async function reload(p) {
+      if (p) page = p;
+      const kw = document.getElementById('f-keyword').value.trim();
+      const status = document.getElementById('f-status').value;
+      const cat = document.getElementById('f-cat').value;
+      const q = new URLSearchParams({ page, pageSize });
+      if (kw) q.set('keyword', kw);
+      if (status !== '-1') q.set('status', status);
+      if (cat) q.set('categoryId', cat);
+      try {
+        const body = document.getElementById('tbody');
+        body.innerHTML = skeletonRows(10, 9); // 表格骨架占位
+        const d = await api.get('/api/admin/articles?' + q.toString());
+        body.innerHTML = (d.list || []).map(a => `
+      <tr>
+        <td><input type="checkbox" class="row-check" data-id="${a.id}" onchange="toggleRow(${a.id}, this.checked)"></td>
+        <td>${a.id}</td>
+        <td class="title-cell"><span class="ellipsis">${esc(a.title)}</span></td>
+        <td>${esc(a.category?.name || '-')}</td>
+        <td>${statusBadge(a.status)}</td>
+        <td>${a.isTop ? '<span class="badge red">置顶</span>' : '—'}</td>
+        <td>${a.viewCount ?? 0}</td>
+        <td style="font-family:monospace;font-size:12px;">${fmtDate(a.publishAt || a.createdAt)}</td>
+        <td class="actions">
+          <button class="btn sm" onclick="editArticle(${a.id})">编辑</button>
+          ${a.status === 1 ? '<button class="btn sm" onclick="toggleTop(' + a.id + ')">' + (a.isTop ? '取消置顶' : '置顶') + '</button>' : ''}
+          <button class="btn sm danger" onclick="delArticle(${a.id})">删除</button>
+        </td>
+      </tr>`).join('') || '<tr><td colspan="9"><div class="empty">暂无文章</div></td></tr>';
+        syncSelection();
+        renderPager(document.getElementById('pagination'), page, Math.max(1, Math.ceil(d.total / pageSize)), reload);
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function openForm() {
+      document.getElementById('form-title').textContent = '新建文章';
+      document.getElementById('form-modal').style.display = 'block';
+      document.getElementById('a-id').value = '';
+      // 新建默认 Markdown 模式
+      if (editorMode !== 'md') toggleEditorMode();
+      ['a-title', 'a-summary', 'a-coverImage', 'a-content', 'a-tagIds', 'a-publishAt', 'a-password'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('a-isTop').checked = false;
+      document.getElementById('a-isFeatured').checked = false;
+      document.getElementById('a-status').value = '1';
+      await loadCatsForForm();
+      document.getElementById('a-title').focus();
+    }
+
+    async function editArticle(id) {
+      try {
+        const a = await api.get('/api/admin/articles/' + id);
+        document.getElementById('form-title').textContent = '编辑文章 #' + id;
+        document.getElementById('form-modal').style.display = 'block';
+        document.getElementById('a-id').value = a.id;
+        document.getElementById('a-title').value = a.title;
+        document.getElementById('a-summary').value = a.summary || '';
+        document.getElementById('a-coverImage').value = a.coverImage || '';
+        document.getElementById('a-content').value = a.content || '';
+        // 旧文章若是 HTML 源码，自动切 HTML 模式，避免保存时 marked 二次转义
+        if (editorMode !== 'html' && looksLikeHtml(a.content || '')) toggleEditorMode();
+        document.getElementById('a-status').value = a.status;
+        document.getElementById('a-isTop').checked = !!a.isTop;
+        document.getElementById('a-isFeatured').checked = !!a.isFeatured;
+        document.getElementById('a-password').value = a.password || '';
+        document.getElementById('a-tagIds').value = (a.tags || []).map(t => t.id).join(',');
+        if (a.publishAt) {
+          const d = new Date(a.publishAt);
+          const p = n => String(n).padStart(2, '0');
+          document.getElementById('a-publishAt').value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+        }
+        await loadCatsForForm();
+        document.getElementById('a-categoryId').value = a.categoryId;
+      } catch (e) { toast(e.message, true); }
+    }
+
+    function closeForm() { document.getElementById('form-modal').style.display = 'none'; }
+
+    // ==================== Markdown 编辑器 ====================
+    let editorMode = 'md'; // 'md' = Markdown（保存自动转 HTML），'html' = 原样 HTML
+
+    // 阻止 mousedown 默认行为：点击按钮时正文 textarea 不失焦，光标/选区保持不变，
+    // 避免选区信息丢失导致插入位置错乱
+    document.getElementById('md-toolbar').addEventListener('mousedown', e => e.preventDefault());
+    document.getElementById('md-toolbar').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      // HTML 模式工具栏禁用：点击给出明确提示，避免"点了没反应"的困惑
+      if (editorMode === 'html') { toast('当前为 HTML 模式，请点击「模式: Markdown」切换后再使用工具栏'); return; }
+      const ta = document.getElementById('a-content');
+      const start = ta.selectionStart, end = ta.selectionEnd;
+      const sel = ta.value.slice(start, end);
+      const ph = btn.dataset.ph || 'text';
+      if (btn.dataset.s) {
+        ta.setRangeText(btn.dataset.s + (sel || ph) + btn.dataset.e, start, end, 'end');
+      } else if (btn.dataset.line) {
+        const lineStart = ta.value.lastIndexOf('\n', start - 1) + 1;
+        ta.setRangeText(btn.dataset.line + (sel || ph), lineStart, end, 'end');
+      } else if (btn.dataset.block) {
+        const inner = sel || '代码';
+        ta.setRangeText('```\n' + inner + '\n```', start, end, 'end');
+      }
+      ta.focus();
+    });
+
+    function toggleEditorMode() {
+      editorMode = editorMode === 'md' ? 'html' : 'md';
+      document.getElementById('btn-mode-toggle').textContent = '模式: ' + (editorMode === 'md' ? 'Markdown' : 'HTML');
+      const tb = document.getElementById('md-toolbar');
+      tb.style.opacity = editorMode === 'md' ? '1' : '.45';
+    }
+
+    function looksLikeHtml(text) {
+      return /<(p|div|pre|h[1-6]|ul|ol|li|table|img|blockquote|code)\b/i.test(text);
+    }
+
+    function renderContent(raw) {
+      if (editorMode === 'html' || looksLikeHtml(raw)) return raw;
+      if (typeof marked !== 'undefined') {
+        try { return marked.parse(raw); } catch (e) { return raw; }
+      }
+      return raw;
+    }
+
+    async function saveArticle(e) {
+      e.preventDefault();
+      const id = document.getElementById('a-id').value;
+      const payload = {
+        title: document.getElementById('a-title').value.trim(),
+        summary: document.getElementById('a-summary').value.trim(),
+        coverImage: document.getElementById('a-coverImage').value.trim(),
+        content: renderContent(document.getElementById('a-content').value),
+        categoryId: parseInt(document.getElementById('a-categoryId').value),
+        status: parseInt(document.getElementById('a-status').value),
+        isTop: document.getElementById('a-isTop').checked,
+        isFeatured: document.getElementById('a-isFeatured').checked,
+        password: document.getElementById('a-password').value.trim() || '',
+        tagIds: document.getElementById('a-tagIds').value.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)),
+        publishAt: document.getElementById('a-publishAt').value ? new Date(document.getElementById('a-publishAt').value).toISOString() : null,
+      };
+      try {
+        if (id) await api.put('/api/admin/articles/' + id, payload);
+        else await api.post('/api/admin/articles', payload);
+        toast('保存成功');
+        closeForm();
+        reload();
+      } catch (err) { toast(err.message, true); }
+    }
+
+    // AI 生成摘要：从库取正文 → 后端调大模型 → 回填摘要框（是否采用由编辑决定）
+    async function aiSummary(ev) {
+      const id = document.getElementById('a-id').value;
+      if (!id) { toast('请先保存文章，再生成摘要', true); return; }
+      const btn = ev.currentTarget;
+      const old = btn.textContent;
+      btn.disabled = true; btn.textContent = '生成中…';
+      try {
+        const data = await api.post('/api/admin/ai/summary', { articleId: parseInt(id) });
+        document.getElementById('a-summary').value = data.summary || '';
+        toast('AI 摘要已生成，可手动修改');
+      } catch (e) { toast(e.message, true); }
+      finally { btn.disabled = false; btn.textContent = old; }
+    }
+
+    // AI 润色：正文发给后端，流式替换编辑器内容（打字机效果）
+    async function aiPolish(ev) {
+      const ta = document.getElementById('a-content');
+      const content = ta.value.trim();
+      if (!content) { toast('正文为空，请先填写内容', true); return; }
+      const btn = ev.currentTarget;
+      const old = btn.textContent;
+      btn.disabled = true; btn.textContent = '润色中…';
+      const orig = ta.value; // 备份，失败可恢复
+      let started = false; // 收到首个 AI 结果后才清空原文，防止请求异常时正文丢失
+      try {
+        await streamRequest('/api/admin/ai/polish', { content },
+          d => { if (!started) { ta.value = ''; started = true; } ta.value += d; },
+          () => toast('润色完成，检查后保存'));
+      } catch (e) { if (started) ta.value = orig; toast(e.message, true); }
+      finally { btn.disabled = false; btn.textContent = old; }
+    }
+
+    async function toggleTop(id) {
+      try {
+        const a = await api.get('/api/admin/articles/' + id);
+        // 详情接口返回 tags(对象数组) 而不含 tagIds，补上避免置顶操作清空文章标签
+        await api.put('/api/admin/articles/' + id, {
+          ...a,
+          tagIds: (a.tags || []).map(t => t.id),
+          isTop: !a.isTop,
+        });
+        toast('已更新置顶状态');
+        reload();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function delArticle(id) {
+      if (!confirm('确定删除该文章?可到回收站恢复')) return;
+      try {
+        await api.del('/api/admin/articles/' + id);
+        toast('已删除');
+        reload();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    loadCatsForFilter();
+    reload(1);
+  </script>
+</body>
+
+</html>

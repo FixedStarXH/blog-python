@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LUMI — 技术博客</title>
+  <meta name="description" content="一个 Go 开发者的技术博客,记录后端、数据库与工具链的实践。">
+  <link rel="stylesheet" href="css/style.css?v=28">
+</head>
+
+<body>
+
+  <header class="topbar" id="topbar"></header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="grid">
+      <div class="hero-coord">
+        <span id="hero-loc">OPEN BLOG SYSTEM · MULTI-AUTHOR</span>
+        <span class="dot-red" id="hero-brand">● 博客系统 · 多作者内容平台</span>
+      </div>
+      <h1 class="hero-title">
+        <span>BLOG<span class="square-red"></span>SYSTEM</span>
+        <span class="outline">WRITE</span>
+        <span class="box-red">SHARE.</span>
+      </h1>
+      <div class="hero-foot">
+        <p class="hero-desc"><b>多作者博客系统</b>:注册即投稿,编辑审核发布。基于 Go + Gin 打造,支持文章、专栏、评论与完整的内容审核工作流。</p>
+        <div class="hero-meta" id="hero-stats">
+          <span class="up">↑ VOL.01 / 2026</span><br>
+          <span id="stat-articles">-</span> Articles · <span id="stat-views">-</span> Views<br>
+          INDEX / CATALOG
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 滚动字幕 -->
+  <div class="marquee">
+    <div class="track" id="marquee-track"></div>
+  </div>
+
+  <!-- 分类索引 -->
+  <nav class="cats">
+    <div class="grid">
+      <div class="cats-head"><span>Index / 分类索引</span><span id="cats-count">—</span></div>
+      <div class="cat-list" id="cat-list"></div>
+    </div>
+  </nav>
+
+  <!-- 头条精选(无框纯排版) -->
+  <section class="feature">
+    <div class="grid" id="feature-sec"></div>
+  </section>
+
+  <!-- 精选文章目录表 -->
+  <main class="directory">
+    <div class="grid">
+      <div class="head">
+        <h2>精选文章</h2>
+        <span class="n"><b id="dir-total">0</b> / TOTAL</span>
+      </div>
+      <div class="dir-head">
+        <span>№</span><span>Title</span><span class="col-c">Category</span><span class="col-d">Date</span>
+      </div>
+      <div id="dir-list"></div>
+      <div class="pagination" id="pagination"></div>
+      <div class="dir-foot">
+        <a href="articles.html">查看全部文章 Archive →</a>
+      </div>
+    </div>
+  </main>
+
+  <!-- 每日一言 -->
+  <section class="quote">
+    <div class="grid">
+      <blockquote></blockquote>
+    </div>
+  </section>
+
+  <!-- 订阅 -->
+  <section class="newsletter">
+    <div class="grid">
+      <h3>订阅更新 — 有新文章第一时间告诉你 <i>◎</i></h3>
+      <form class="field" onsubmit="return false">
+        <input type="email" placeholder="you@example.com">
+        <button type="submit" class="btn-shine" onclick="toast('功能开发中,敬请期待')">Subscribe →</button>
+      </form>
+    </div>
+  </section>
+
+  <footer class="footer" id="footer"></footer>
+
+  <script src="js/api.js?v=11"></script>
+  <script src="js/common.js?v=21"></script>
+  <script type="module" src="./src/main-public.jsx"></script>
+  <script src="js/home.js?v=12"></script>
+</body>
+
+</html>

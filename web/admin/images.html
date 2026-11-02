@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>图库上传 — 后台</title>
+  <link rel="stylesheet" href="../css/admin.css?v=19">
+</head>
+
+<body>
+  <div class="admin-wrap">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main">
+      <div class="main-header">
+        <h1>图库上传</h1>
+        <span class="sub">Image Gallery</span>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>上传图片</h3>
+        </div>
+        <div class="panel-body">
+          <div class="upload-zone" id="upload-zone">
+            <div class="ico">⤴</div>
+            <p>点击选择图片,或将文件拖到这里</p>
+            <p style="font-size:11px;color:var(--gray-a);margin-top:6px;">支持 jpg / png / gif / webp,≤ 5MB</p>
+          </div>
+          <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.gif,.webp" style="display:none">
+          <div id="uploading" class="loading" style="display:none;">上传中…</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>图片库</h3>
+        </div>
+        <div class="panel-body">
+          <div class="image-grid" id="img-grid"></div>
+          <div class="pagination" id="pagination"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="../js/api.js?v=8"></script>
+  <script src="../js/admin-common.js?v=11"></script>
+  <script>
+    initAdmin('images');
+    let page = 1;
+    const pageSize = 24;
+
+    const zone = document.getElementById('upload-zone');
+    const input = document.getElementById('file-input');
+
+    zone.addEventListener('click', () => input.click());
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault(); zone.classList.remove('drag');
+      if (e.dataTransfer.files.length) upload(e.dataTransfer.files[0]);
+    });
+    input.addEventListener('change', () => { if (input.files.length) upload(input.files[0]); });
+
+    async function upload(file) {
+      const fd = new FormData();
+      fd.append('file', file);
+      document.getElementById('uploading').style.display = 'block';
+      try {
+        const data = await api.post('/api/admin/upload', fd);
+        toast('上传成功');
+        // 复制 URL 到剪贴板
+        try { await navigator.clipboard.writeText(data.url); toast('URL 已复制: ' + data.url); } catch (e) { }
+        reload();
+      } catch (e) { toast(e.message, true); }
+      document.getElementById('uploading').style.display = 'none';
+      input.value = '';
+    }
+
+    async function reload(p) {
+      if (p) page = p;
+      try {
+        const d = await api.get('/api/admin/images?page=' + page + '&pageSize=' + pageSize);
+        document.getElementById('img-grid').innerHTML = (d.list || []).map(img => `
+      <div class="image-cell">
+        <img src="${esc(img.url)}" alt="${esc(img.name)}">
+        <button class="i-del" onclick="delImg(${img.id})">✕</button>
+        <div class="i-url" title="点击复制" data-copy-url="${esc(img.url)}">${esc(img.url)}</div>
+      </div>`).join('') || '<div class="empty" style="grid-column:1/-1">暂无图片</div>';
+        renderPager(document.getElementById('pagination'), page, Math.max(1, Math.ceil(d.total / pageSize)), reload);
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function copyUrl(url) {
+      try { await navigator.clipboard.writeText(url); toast('已复制: ' + url); }
+      catch (e) { toast(url); }
+    }
+
+    // 事件委托处理"复制 URL"：data-* 属性安全传递，避免 onclick 内联拼字符串注入
+    document.getElementById('img-grid').addEventListener('click', e => {
+      const el = e.target.closest('[data-copy-url]');
+      if (el) copyUrl(el.dataset.copyUrl);
+    });
+
+    async function delImg(id) {
+      if (!confirm('确定删除该图片?')) return;
+      try {
+        await api.del('/api/admin/images/' + id);
+        toast('已删除');
+        reload();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    reload(1);
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>评论管理 — 后台</title>
+  <link rel="stylesheet" href="../css/admin.css?v=19">
+</head>
+
+<body>
+  <div class="admin-wrap">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main">
+      <div class="main-header">
+        <h1>评论管理</h1>
+        <span class="sub">Comments Moderation</span>
+      </div>
+
+      <div class="toolbar">
+        <select id="f-status" onchange="reload(1)">
+          <option value="0">待审核</option>
+          <option value="1">已通过</option>
+          <option value="2">已驳回</option>
+          <option value="-1">全部</option>
+        </select>
+        <button class="btn sm green" onclick="batchOp('approve')">批量通过</button>
+        <button class="btn sm danger" onclick="batchOp('delete')">批量删除</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-body" style="padding:0;">
+          <table class="data">
+            <thead>
+              <tr>
+                <th style="width:30px"><input type="checkbox" onchange="toggleAll(this)"></th>
+                <th>内容</th>
+                <th>昵称</th>
+                <th>文章</th>
+                <th>状态</th>
+                <th>时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </main>
+  </div>
+
+  <script src="../js/api.js?v=8"></script>
+  <script src="../js/admin-common.js?v=11"></script>
+  <script>
+    initAdmin('comments');
+    let page = 1;
+    const pageSize = 10;
+
+    async function reload(p) {
+      if (p) page = p;
+      const status = document.getElementById('f-status').value;
+      const q = new URLSearchParams({ page, pageSize });
+      if (status !== '-1') q.set('status', status);
+      try {
+        const d = await api.get('/api/admin/comments?' + q.toString());
+        document.getElementById('tbody').innerHTML = (d.list || []).map(c => `
+      <tr>
+        <td><input type="checkbox" class="ck" value="${c.id}"></td>
+        <td class="title-cell"><span class="ellipsis">${esc(c.content)}</span></td>
+        <td>${esc(c.nickname || '匿名')}</td>
+        <td class="title-cell"><span class="ellipsis">${esc(c.articleTitle || '')}</span></td>
+        <td>${commentStatusBadge(c.status)}</td>
+        <td style="font-family:monospace;font-size:12px;">${fmtDateTime(c.createdAt)}</td>
+        <td class="actions">
+          ${c.status !== 1 ? '<button class="btn sm green" onclick="setStatus(' + c.id + ',1)">通过</button>' : ''}
+          ${c.status !== 2 ? '<button class="btn sm" onclick="setStatus(' + c.id + ',2)">驳回</button>' : ''}
+          <button class="btn sm danger" onclick="del(' + c.id + ')">删除</button>
+        </td>
+      </tr>`).join('') || '<tr><td colspan="7"><div class="empty">暂无评论</div></td></tr>';
+        renderPager(document.getElementById('pagination'), page, Math.max(1, Math.ceil(d.total / pageSize)), reload);
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function setStatus(id, status) {
+      try {
+        await api.put('/api/admin/comments/' + id + '/status', { status });
+        toast('操作成功');
+        reload();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function del(id) {
+      if (!confirm('确定删除该评论?')) return;
+      try {
+        await api.del('/api/admin/comments/' + id);
+        toast('已删除');
+        reload();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    function toggleAll(el) {
+      document.querySelectorAll('.ck').forEach(c => c.checked = el.checked);
+    }
+
+    async function batchOp(action) {
+      const ids = Array.from(document.querySelectorAll('.ck:checked')).map(c => c.value);
+      if (!ids.length) return toast('请先勾选评论', true);
+      if (!confirm('确定对选中的 ' + ids.length + ' 条评论执行操作?')) return;
+      try {
+        await api.post('/api/admin/comments/batch', { ids, action });
+        toast('批量操作成功');
+        reload();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    reload(1);
+  </script>
+</body>
+
+</html>

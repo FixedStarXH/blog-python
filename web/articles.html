@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文章列表 — LUMI</title>
+  <meta name="description" content="全部文章,按分类、标签、关键词筛选。">
+  <link rel="stylesheet" href="css/style.css?v=28">
+</head>
+
+<body>
+
+  <header class="topbar" id="topbar"></header>
+
+  <section class="page-hero">
+    <div class="grid">
+      <div class="crumb"><a href="index.html">Home</a> / <span id="crumb-cur">Archive</span></div>
+      <h1 id="page-title">文章归档</h1>
+      <div class="sub" id="page-sub">ALL ARTICLES</div>
+      <form class="searchbar" id="search-form" style="grid-column:1/13; margin-top:28px;">
+        <input type="text" id="search-input" placeholder="搜索文章标题 / 摘要…">
+        <button type="submit">→</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- 筛选条 -->
+  <section class="cats" style="background:var(--paper-2);">
+    <div class="grid" style="padding:24px 40px;">
+      <div class="cat-list" id="filter-cats" style="grid-column:1/13;"></div>
+    </div>
+  </section>
+
+  <main class="directory" style="border-bottom:none;">
+    <div class="grid">
+      <div class="head">
+        <h2 id="list-title">文章列表</h2>
+        <span class="n"><b id="dir-total">0</b> 篇</span>
+        <span style="margin-left:auto;display:flex;gap:10px;font-size:11px;letter-spacing:.1em;">
+          <a href="#" class="sort-btn" data-sort="latest" style="font-weight:700;">最新</a>
+          <a href="#" class="sort-btn" data-sort="hot" style="color:var(--gray-a);">最热</a>
+        </span>
+      </div>
+      <div class="dir-head">
+        <span>№</span><span>Title</span><span class="col-c">Category</span><span class="col-d">Date</span>
+      </div>
+      <div id="dir-list"></div>
+      <div class="pagination" id="pagination"></div>
+    </div>
+  </main>
+
+  <footer class="footer" id="footer"></footer>
+
+  <script src="js/api.js?v=11"></script>
+  <script src="js/common.js?v=21"></script>
+  <script type="module" src="./src/main-public.jsx"></script>
+  <script src="js/articles.js?v=10"></script>
+</body>
+
+</html>

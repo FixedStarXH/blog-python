@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录 — 博客系统</title>
+  <meta name="description" content="登录博客系统。">
+  <link rel="stylesheet" href="css/style.css?v=28">
+  <style>
+    .auth-body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .auth-box {
+      width: 400px;
+    }
+
+    .auth-box .box {
+      border: 1px solid var(--ink);
+      background: var(--white);
+      padding: 36px;
+    }
+
+    .auth-box h1 {
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: -.01em;
+    }
+
+    .auth-box .sub {
+      font-size: 11px;
+      color: var(--gray-6);
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      margin: 6px 0 24px;
+    }
+
+    .auth-box .field {
+      margin-bottom: 16px;
+    }
+
+    .auth-box .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--gray-6);
+      margin-bottom: 6px;
+    }
+
+    .auth-box .field input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      padding: 12px 14px;
+      font-size: 14px;
+      color: var(--ink);
+      outline: none;
+      transition: border-color .15s ease;
+    }
+
+    .auth-box .field input:focus {
+      border-color: var(--red);
+    }
+
+    .auth-box .auth-btn {
+      width: 100%;
+      background: var(--ink);
+      color: var(--paper);
+      border: none;
+      padding: 14px;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      cursor: pointer;
+      transition: background .15s ease;
+    }
+
+    .auth-box .auth-btn:hover {
+      background: var(--red);
+    }
+
+    .auth-box .err {
+      color: var(--red);
+      font-size: 13px;
+      margin-top: 12px;
+      display: none;
+      text-align: center;
+    }
+
+    .auth-box .switch {
+      margin-top: 16px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--gray-6);
+    }
+
+    .auth-box .switch a {
+      color: var(--red);
+      font-weight: 600;
+    }
+
+    .auth-back {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--gray-6);
+    }
+
+    .auth-back a:hover {
+      color: var(--red);
+    }
+
+    /* 浮动标签输入框：label 默认浮在框内，聚焦或有内容时上浮变小变红 */
+    .auth-box .float-field {
+      position: relative;
+      margin-bottom: 16px;
+    }
+
+    .auth-box .float-field input {
+      padding: 19px 14px 8px;
+    }
+
+    .auth-box .float-field label {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--gray-a);
+      margin: 0;
+      pointer-events: none;
+      transition: top .18s ease, transform .18s ease, font-size .18s ease, color .18s ease;
+    }
+
+    .auth-box .float-field input:focus+label,
+    .auth-box .float-field input:not(:placeholder-shown)+label {
+      top: 10px;
+      transform: translateY(-50%) scale(.72);
+      transform-origin: left top;
+      color: var(--red);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="auth-body">
+    <div class="auth-box">
+      <div class="box">
+        <h1>登录</h1>
+        <div class="sub">Sign in to Blog System</div>
+        <form onsubmit="doLogin(event)">
+          <div class="field float-field">
+            <input type="text" id="username" placeholder=" " autofocus>
+            <label for="username">用户名 / 邮箱</label>
+          </div>
+          <div class="field float-field">
+            <input type="password" id="password" placeholder=" ">
+            <label for="password">密码</label>
+          </div>
+          <button class="auth-btn" type="submit">登 录</button>
+          <div class="err" id="login-err">登录失败</div>
+        </form>
+        <div class="switch">还没有账号?<a href="register.html">立即注册</a></div>
+      </div>
+      <div class="auth-back"><a href="index.html">← 返回首页</a></div>
+    </div>
+  </div>
+
+  <script src="js/api.js?v=11"></script>
+  <script>
+    document.getElementById('password').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin(e);
+    });
+
+    async function doLogin(e) {
+      e.preventDefault();
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const errEl = document.getElementById('login-err');
+      errEl.style.display = 'none';
+      if (!username || !password) { errEl.textContent = '请输入用户名和密码'; errEl.style.display = 'block'; return; }
+      try {
+        const data = await api.post('/api/auth/login', { username, password }, true);
+        localStorage.setItem('accessToken', data.accessToken);
+        localStorage.setItem('refreshToken', data.refreshToken);
+        localStorage.setItem('admin', JSON.stringify(data.user));
+        // 编辑/管理员跳后台,普通用户跳个人中心
+        if (data.user && data.user.role >= 2) location.href = 'admin/dashboard.html';
+        else location.href = 'me.html';
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = 'block';
+      }
+    }
+  </script>
+</body>
+
+</html>

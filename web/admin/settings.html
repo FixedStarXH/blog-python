@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>站点设置 — 后台</title>
+  <link rel="stylesheet" href="../css/admin.css?v=19">
+</head>
+
+<body>
+  <div class="admin-wrap">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main">
+      <div class="main-header">
+        <h1>站点设置</h1>
+        <span class="sub">Site Settings</span>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>基本信息</h3>
+        </div>
+        <div class="panel-body">
+          <div class="form-grid">
+            <div class="field"><label>站点标题</label><input type="text" id="s-site_title"></div>
+            <div class="field"><label>副标题</label><input type="text" id="s-site_subtitle"></div>
+            <div class="field full"><label>站点描述</label><input type="text" id="s-site_description"></div>
+            <div class="field"><label>Logo URL</label><input type="text" id="s-site_logo"></div>
+            <div class="field"><label>备案号</label><input type="text" id="s-site_beian"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>社交链接</h3>
+        </div>
+        <div class="panel-body">
+          <div class="form-grid">
+            <div class="field"><label>GitHub</label><input type="text" id="s-social_github"></div>
+            <div class="field"><label>Email</label><input type="text" id="s-social_email"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>每日一言池</h3><span class="sub" style="font-size:11px;">每行一条,格式: 内容 | 作者</span>
+        </div>
+        <div class="panel-body">
+          <div class="field">
+            <textarea id="s-quotes" rows="6" placeholder="把每一个今天都当作新的开始。 | 佚名&#10;坚持是最朴素的天赋。 | 佚名"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>修改密码</h3>
+        </div>
+        <div class="panel-body">
+          <div class="form-grid">
+            <div class="field"><label>原密码</label><input type="password" id="old-pwd"></div>
+            <div class="field"><label>新密码</label><input type="password" id="new-pwd"></div>
+          </div>
+          <div class="form-actions">
+            <button class="btn" onclick="changePwd()">更新密码</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn primary" onclick="saveSettings()">保存全部设置</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="../js/api.js?v=8"></script>
+  <script src="../js/admin-common.js?v=11"></script>
+  <script>
+    initAdmin('settings');
+
+    async function load() {
+      try {
+        const s = await api.get('/api/admin/settings');
+        document.getElementById('s-site_title').value = s.site_title || '';
+        document.getElementById('s-site_subtitle').value = s.site_subtitle || '';
+        document.getElementById('s-site_description').value = s.site_description || '';
+        document.getElementById('s-site_logo').value = s.site_logo || '';
+        document.getElementById('s-site_beian').value = s.site_beian || '';
+        document.getElementById('s-social_github').value = s.social_github || '';
+        document.getElementById('s-social_email').value = s.social_email || '';
+        const quotes = s.quotes || [];
+        document.getElementById('s-quotes').value = quotes.map(q => q.content + ' | ' + (q.author || '佚名')).join('\n');
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function saveSettings() {
+      const quotes = document.getElementById('s-quotes').value.split('\n')
+        .map(line => line.trim()).filter(Boolean)
+        .map(line => {
+          const [content, author] = line.split('|').map(s => s.trim());
+          return { content, author: author || '佚名' };
+        });
+      const payload = {
+        site_title: document.getElementById('s-site_title').value.trim(),
+        site_subtitle: document.getElementById('s-site_subtitle').value.trim(),
+        site_description: document.getElementById('s-site_description').value.trim(),
+        site_logo: document.getElementById('s-site_logo').value.trim(),
+        site_beian: document.getElementById('s-site_beian').value.trim(),
+        social_github: document.getElementById('s-social_github').value.trim(),
+        social_email: document.getElementById('s-social_email').value.trim(),
+        quotes,
+      };
+      try {
+        await api.put('/api/admin/settings', payload);
+        toast('设置已保存');
+      } catch (e) { toast(e.message, true); }
+    }
+
+    async function changePwd() {
+      const oldPassword = document.getElementById('old-pwd').value;
+      const newPassword = document.getElementById('new-pwd').value;
+      if (!oldPassword || !newPassword) return toast('请填写原密码和新密码', true);
+      if (newPassword.length < 6) return toast('新密码至少 6 位', true);
+      try {
+        await api.put('/api/admin/password', { oldPassword, newPassword });
+        toast('密码已更新');
+        document.getElementById('old-pwd').value = '';
+        document.getElementById('new-pwd').value = '';
+      } catch (e) { toast(e.message, true); }
+    }
+
+    load();
+  </script>
+</body>
+
+</html>
