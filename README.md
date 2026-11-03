@@ -32,6 +32,14 @@ uvicorn app.main:app --reload --port 8080
 
 初始 schema 已由 Alembic revision `0001_initial` 管理。默认数据库为本地 SQLite；生产环境使用 MySQL 8。种子账号由 `BLOG_SEED_USERNAME`、`BLOG_SEED_EMAIL` 和 `BLOG_SEED_PASSWORD` 配置。生产环境启动会拒绝默认 JWT 密钥及默认种子账号设置。迁移脚本应先审查并提交，再用于部署；不要直接对既有 Go 数据库执行自动 schema 变更。
 
+运行隔离数据库上的核心接口检查：
+
+```powershell
+python -m unittest discover -s tests/integration -v
+```
+
+前端使用 Node.js 20.19+ 或 22.12+；静态资源检查需要先在 `web/` 执行 `npm ci` 和 `npm run build`。
+
 ## Docker Compose
 
 复制 `.env.example` 为 `.env`，替换所有凭据，然后运行：

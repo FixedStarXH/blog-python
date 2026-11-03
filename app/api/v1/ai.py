@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.errors import DomainError, envelope
 from app.integrations.ai.client import chat, embed, open_chat_stream
 from app.models import Article, ArticleChunk, User
+from app.repositories.articles import visible_conditions
 
 router=APIRouter()
 
@@ -50,7 +51,7 @@ async def admin_polish(body: dict, user: User=Depends(require_editor)):
 
 @router.post("/articles/{article_id}/summary")
 async def summarize_article(article_id: int, db: Session=Depends(get_db)):
-    a=db.scalar(select(Article).where(Article.id==article_id,Article.status==1,Article.deleted_at.is_(None),Article.password==""))
+    a=db.scalar(select(Article).where(Article.id==article_id,*visible_conditions(),Article.password==""))
     if not a: raise DomainError("article not found",404)
     return envelope({"summary":await complete("Summarize the article in Chinese.",a.content[:30000])})
 
@@ -64,10 +65,10 @@ async def ask(body: dict, db: Session=Depends(get_db)):
     if article_id is not None:
         try: article_id=int(article_id)
         except (TypeError,ValueError) as exc: raise DomainError("invalid articleId",422) from exc
-        article=db.scalar(select(Article).where(Article.id==article_id,Article.status==1,Article.password=="",Article.deleted_at.is_(None)))
+        article=db.scalar(select(Article).where(Article.id==article_id,*visible_conditions(),Article.password==""))
         if not article: raise DomainError("article not found",404)
     query_vectors=await embed([question]); query=query_vectors[0]
-    chunk_query=select(ArticleChunk).join(Article).where(Article.status==1,Article.password=="",Article.deleted_at.is_(None))
+    chunk_query=select(ArticleChunk).join(Article).where(*visible_conditions(),Article.password=="",ArticleChunk.embedding_model==settings.embedding_model)
     if article_id is not None: chunk_query=chunk_query.where(ArticleChunk.article_id==article_id)
     chunks=db.scalars(chunk_query).all()
     ranked=[]

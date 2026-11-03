@@ -13,6 +13,7 @@ from app.core.security import hash_password
 from app.models import Article, AuditLog, Category, Comment, Image, Link, MetricEvent, SiteSetting, Tag, User
 from app.api.v1.articles import article_data
 from app.api.v1.articles import _parse_datetime
+from app.storage.files import remove_upload
 
 router = APIRouter(prefix="/admin")
 
@@ -96,7 +97,11 @@ def images(db: Session = Depends(get_db), user: User = Depends(require_editor), 
 def delete_image(image_id: int, db: Session = Depends(get_db), user: User = Depends(require_editor)):
     x=db.get(Image,image_id)
     if not x: raise DomainError("image not found",404)
-    (Path(settings.upload_dir).resolve()/Path(x.name).name).unlink(missing_ok=True); db.delete(x); db.commit(); return envelope({})
+    try:
+        remove_upload(x.url, settings.upload_dir)
+    except ValueError as exc:
+        raise DomainError("invalid stored upload path", 400) from exc
+    db.delete(x); db.commit(); return envelope({})
 
 @router.get("/links")
 def links(db: Session = Depends(get_db), user: User = Depends(require_editor)):

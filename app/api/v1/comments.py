@@ -8,6 +8,7 @@ from app.api.deps import current_user, get_db, optional_user
 from app.core.errors import DomainError, envelope
 from app.core.sensitive import filter_sensitive
 from app.models import Article, Comment, MetricEvent, User
+from app.repositories.articles import visible_conditions
 from app.schemas.common import CommentInput
 
 router = APIRouter()
@@ -19,6 +20,8 @@ def comment_dict(c):
 
 @router.get("/articles/{article_id}/comments")
 def list_comments(article_id: int, db: Session = Depends(get_db), page: int = 1, pageSize: int = 50):
+    if not db.scalar(select(Article.id).where(Article.id == article_id, *visible_conditions())):
+        raise DomainError("article not found", 404)
     q=select(Comment).where(Comment.article_id == article_id, Comment.status == 1, Comment.deleted_at.is_(None))
     total=db.scalar(select(func.count()).select_from(q.subquery())) or 0
     rows = db.scalars(q.order_by(Comment.created_at).offset((page-1)*pageSize).limit(pageSize)).all()
@@ -27,7 +30,7 @@ def list_comments(article_id: int, db: Session = Depends(get_db), page: int = 1,
 
 @router.post("/articles/{article_id}/comments", status_code=201)
 def create_comment(article_id: int, body: CommentInput, request: Request, db: Session = Depends(get_db), user: User | None = Depends(optional_user)):
-    article = db.scalar(select(Article).where(Article.id == article_id, Article.status == 1, Article.deleted_at.is_(None)))
+    article = db.scalar(select(Article).where(Article.id == article_id, *visible_conditions()))
     if not article: raise DomainError("article not found", 404)
     parent_id = body.parent_id
     if parent_id and not db.scalar(select(Comment.id).where(Comment.id == parent_id, Comment.article_id == article_id, Comment.status == 1, Comment.deleted_at.is_(None))):
@@ -39,6 +42,8 @@ def create_comment(article_id: int, body: CommentInput, request: Request, db: Se
 
 @router.put("/articles/{article_id}/comments/{comment_id}/like")
 def like_comment(article_id: int, comment_id: int,request: Request, db: Session = Depends(get_db)):
+    if not db.scalar(select(Article.id).where(Article.id == article_id, *visible_conditions())):
+        raise DomainError("article not found", 404)
     c = db.scalar(select(Comment).where(Comment.id == comment_id, Comment.article_id == article_id, Comment.status == 1, Comment.deleted_at.is_(None)))
     if not c: raise DomainError("comment not found", 404)
     ip=request.client.host if request.client else "unknown"

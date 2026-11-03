@@ -168,10 +168,12 @@ Path(settings.upload_dir).mkdir(parents=True,exist_ok=True)
 app.mount("/uploads",StaticFiles(directory=settings.upload_dir),name="uploads")
 
 
-@app.get("/{asset_path:path}",include_in_schema=False)
-def frontend_assets(asset_path: str):
+@app.api_route("/{asset_path:path}",methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],include_in_schema=False)
+def frontend_assets(asset_path: str, request: Request):
     if asset_path=="api" or asset_path.startswith("api/"):
         return JSONResponse(status_code=404,content=envelope(None,"接口不存在或未实现",404))
+    if request.method != "GET":
+        return JSONResponse(status_code=404,content={"detail":"Not Found"})
     candidate=(Path("dist")/asset_path).resolve()
     root=Path("dist").resolve()
     if root in candidate.parents and candidate.is_file(): return FileResponse(candidate)

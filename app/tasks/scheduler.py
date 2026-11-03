@@ -33,6 +33,8 @@ async def rag_maintenance_loop():
             articles=db.scalars(select(Article).where(Article.status==1,Article.password=="",Article.deleted_at.is_(None))).all()
             for article in articles:
                 last_index=db.scalar(select(func.max(ArticleChunk.indexed_at)).where(ArticleChunk.article_id==article.id))
-                if last_index is None or article.updated_at>last_index:
+                stale_model=db.scalar(select(ArticleChunk.id).where(ArticleChunk.article_id==article.id,ArticleChunk.embedding_model!=settings.embedding_model).limit(1))
+                stale_dimension = settings.embedding_dimension and db.scalar(select(ArticleChunk.id).where(ArticleChunk.article_id==article.id,ArticleChunk.embedding_dim!=settings.embedding_dimension).limit(1))
+                if last_index is None or article.updated_at>last_index or stale_model or stale_dimension:
                     try: await index_article(db,article)
                     except Exception: logger.exception("RAG refresh failed article_id=%s",article.id)

@@ -8,7 +8,7 @@ from app.api.deps import current_user, get_db, optional_user, require_editor
 from app.core.errors import DomainError, envelope
 from app.core.security import hash_password, verify_password
 from app.models import Article, Category, ColumnModel, MetricEvent, Tag, User
-from app.repositories.articles import page_public
+from app.repositories.articles import page_public, visible_conditions
 from app.schemas.common import ArticleInput
 
 router = APIRouter()
@@ -37,7 +37,7 @@ def hot_articles(db: Session = Depends(get_db), limit: int = Query(10, ge=1, le=
 
 @router.get("/articles/{article_id}")
 def public_article(article_id: int, db: Session = Depends(get_db)):
-    a = db.scalar(select(Article).where(Article.id == article_id, Article.status == 1, Article.deleted_at.is_(None)))
+    a = db.scalar(select(Article).where(Article.id == article_id, *visible_conditions()))
     if not a:
         raise DomainError("article not found", 404)
     if a.password:
@@ -47,7 +47,7 @@ def public_article(article_id: int, db: Session = Depends(get_db)):
 
 @router.post("/articles/{article_id}/unlock")
 def unlock_article(article_id: int, body: dict, db: Session = Depends(get_db)):
-    a = db.scalar(select(Article).where(Article.id == article_id, Article.status == 1, Article.deleted_at.is_(None)))
+    a = db.scalar(select(Article).where(Article.id == article_id, *visible_conditions()))
     if not a or not a.password or not verify_password(str(body.get("password", "")), a.password):
         raise DomainError("article password is incorrect", 403)
     return envelope(article_data(a))
@@ -55,19 +55,19 @@ def unlock_article(article_id: int, body: dict, db: Session = Depends(get_db)):
 
 @router.get("/articles/{article_id}/nav")
 def article_nav(article_id: int, db: Session = Depends(get_db)):
-    current=db.scalar(select(Article).where(Article.id==article_id,Article.status==1,Article.deleted_at.is_(None)))
+    current=db.scalar(select(Article).where(Article.id==article_id,*visible_conditions()))
     if not current: raise DomainError("article not found",404)
-    previous=db.scalar(select(Article).where(Article.status==1,Article.deleted_at.is_(None),Article.password=="",Article.id<article_id).order_by(Article.id.desc()).limit(1))
-    following=db.scalar(select(Article).where(Article.status==1,Article.deleted_at.is_(None),Article.password=="",Article.id>article_id).order_by(Article.id).limit(1))
+    previous=db.scalar(select(Article).where(*visible_conditions(),Article.password=="",Article.id<article_id).order_by(Article.id.desc()).limit(1))
+    following=db.scalar(select(Article).where(*visible_conditions(),Article.password=="",Article.id>article_id).order_by(Article.id).limit(1))
     shape=lambda a:{"id":a.id,"title":a.title} if a else None
-    related=db.scalars(select(Article).where(Article.status==1,Article.deleted_at.is_(None),Article.password=="",Article.category_id==current.category_id,Article.id!=current.id).order_by(Article.view_count.desc()).limit(5)).all()
+    related=db.scalars(select(Article).where(*visible_conditions(),Article.password=="",Article.category_id==current.category_id,Article.id!=current.id).order_by(Article.view_count.desc()).limit(5)).all()
     return envelope({"prev":shape(previous),"next":shape(following),"related":[{"id":a.id,"title":a.title,"summary":a.summary,"coverImage":a.cover_image} for a in related]})
 
 
 @router.put("/articles/{article_id}/view")
 def add_view(article_id: int, request: Request, db: Session = Depends(get_db),user: User|None=Depends(optional_user)):
     a = db.get(Article, article_id)
-    if not a or a.status != 1 or a.deleted_at:
+    if not a or a.status != 1 or a.deleted_at or (a.publish_at and a.publish_at > datetime.utcnow()):
         raise DomainError("article not found", 404)
     raw=f"user:{user.id}" if user else f"ip:{request.client.host if request.client else 'unknown'}"
     fingerprint=hashlib.sha256(raw.encode()).hexdigest()
@@ -84,7 +84,7 @@ def add_view(article_id: int, request: Request, db: Session = Depends(get_db),us
 @router.put("/articles/{article_id}/like")
 def like_article(article_id: int, request: Request, db: Session = Depends(get_db),user: User|None=Depends(optional_user)):
     a = db.get(Article, article_id)
-    if not a or a.status != 1 or a.deleted_at:
+    if not a or a.status != 1 or a.deleted_at or (a.publish_at and a.publish_at > datetime.utcnow()):
         raise DomainError("article not found", 404)
     raw=f"user:{user.id}" if user else f"ip:{request.client.host if request.client else 'unknown'}"
     fingerprint=hashlib.sha256(raw.encode()).hexdigest()
@@ -98,7 +98,7 @@ def like_article(article_id: int, request: Request, db: Session = Depends(get_db
 
 @router.get("/articles/{article_id}/export")
 def export_article(article_id: int, db: Session = Depends(get_db)):
-    a = db.scalar(select(Article).where(Article.id == article_id, Article.status == 1, Article.deleted_at.is_(None), Article.password == ""))
+    a = db.scalar(select(Article).where(Article.id == article_id, *visible_conditions(), Article.password == ""))
     if not a:
         raise DomainError("article not found", 404)
     import re, html

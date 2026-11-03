@@ -4,8 +4,13 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import Article, Tag
 
 
+def visible_conditions():
+    return (Article.status == 1, Article.deleted_at.is_(None),
+            or_(Article.publish_at.is_(None), Article.publish_at <= datetime.utcnow()))
+
+
 def public_query(db: Session):
-    return select(Article).options(selectinload(Article.author), selectinload(Article.category), selectinload(Article.tags)).where(Article.status == 1, Article.deleted_at.is_(None), Article.password == "", or_(Article.publish_at.is_(None),Article.publish_at<=datetime.utcnow()))
+    return select(Article).options(selectinload(Article.author), selectinload(Article.category), selectinload(Article.tags)).where(*visible_conditions(), Article.password == "")
 
 
 def page_public(db: Session, page: int, size: int, keyword: str = "", category_id: int | None = None, author_id: int | None = None, sort: str = "latest", tag: str = "", featured: bool = False, seed: int = 1):
