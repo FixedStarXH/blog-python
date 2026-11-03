@@ -46,7 +46,8 @@ def upgrade():
     op.create_index("ix_article_metrics_article_id","article_metrics",["article_id"]);op.create_index("ix_article_metrics_kind","article_metrics",["kind"]);op.create_index("ix_article_metrics_created_at","article_metrics",["created_at"])
     op.create_table("refresh_tokens",sa.Column("token_hash",sa.String(64),primary_key=True),sa.Column("user_id",sa.Integer(),sa.ForeignKey("users.id"),nullable=False),sa.Column("expires_at",sa.DateTime(),nullable=False),sa.Column("revoked_at",sa.DateTime(),nullable=True))
     op.create_index("ix_refresh_tokens_user_id","refresh_tokens",["user_id"])
-    op.create_table("settings",sa.Column("key",sa.String(100),primary_key=True),sa.Column("value",sa.Text(),nullable=False,server_default=""))
+    # MySQL requires TEXT defaults to be expressions. ORM inserts provide a value.
+    op.create_table("settings",sa.Column("key",sa.String(100),primary_key=True),sa.Column("value",sa.Text(),nullable=False))
     op.create_table("links",sa.Column("id",sa.Integer(),primary_key=True),sa.Column("name",sa.String(50),nullable=False),sa.Column("url",sa.String(255),nullable=False),sa.Column("description",sa.String(200),nullable=False,server_default=""),sa.Column("sort",sa.Integer(),nullable=False,server_default="0"),sa.Column("enabled",sa.Boolean(),nullable=False,server_default=sa.true()),sa.Column("deleted_at",sa.DateTime(),nullable=True))
     op.create_table("images",sa.Column("id",sa.Integer(),primary_key=True),sa.Column("name",sa.String(255),nullable=False),sa.Column("url",sa.String(255),nullable=False),sa.Column("size",sa.Integer(),nullable=False),sa.Column("ext",sa.String(10),nullable=False),sa.Column("uploader_id",sa.Integer(),sa.ForeignKey("users.id"),nullable=False),sa.Column("created_at",sa.DateTime(),nullable=False))
     op.create_index("ix_images_uploader_id","images",["uploader_id"])

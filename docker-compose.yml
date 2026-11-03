@@ -1,8 +1,8 @@
 services:
   app:
     build: .
-    env_file: .env
-    ports: ["8080:8080"]
+    env_file: ${BLOG_ENV_FILE:-.env}
+    ports: ["${BLOG_BIND_ADDRESS:-0.0.0.0}:${BLOG_HTTP_PORT:-8080}:8080"]
     volumes: ["blog_uploads:/app/uploads"]
     depends_on:
       mysql: {condition: service_healthy}
@@ -21,10 +21,11 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-me-root}
     volumes: ["blog_mysql:/var/lib/mysql"]
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 30s
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]

@@ -10,6 +10,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+COPY alembic.ini ./
 COPY app ./app
 COPY --from=frontend /src/dist ./dist
 RUN adduser --system --group --no-create-home appuser && mkdir -p uploads && chown appuser:appuser uploads

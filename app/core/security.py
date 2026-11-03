@@ -3,9 +3,12 @@ import hashlib
 import secrets
 import jwt
 from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
+from pwdlib.hashers.argon2 import Argon2Hasher
+from pwdlib.hashers.bcrypt import BcryptHasher
 from app.core.config import settings
 
-password_hash = PasswordHash.recommended()
+password_hash = PasswordHash((Argon2Hasher(), BcryptHasher()))
 
 
 def hash_password(password: str) -> str:
@@ -13,7 +16,17 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return password_hash.verify(password, hashed)
+    try:
+        return password_hash.verify(password, hashed)
+    except (UnknownHashError, ValueError):
+        return False
+
+
+def verify_and_update_password(password: str, hashed: str) -> tuple[bool, str | None]:
+    try:
+        return password_hash.verify_and_update(password, hashed)
+    except (UnknownHashError, ValueError):
+        return False, None
 
 
 def issue_token(user_id: int, token_type: str, lifetime: timedelta, jti: str | None = None) -> str:

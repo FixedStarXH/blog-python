@@ -1,6 +1,7 @@
 from datetime import datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, Table, Column
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.mysql import DATETIME, MEDIUMTEXT
 from app.db.base import Base
 
 article_tags = Table(
@@ -61,7 +62,7 @@ class Article(Base):
     __tablename__ = "articles"
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200), index=True)
-    content: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"))
     summary: Mapped[str] = mapped_column(String(500), default="")
     cover_image: Mapped[str] = mapped_column(String(255), default="")
     source_url: Mapped[str] = mapped_column(String(255), default="")
@@ -71,7 +72,7 @@ class Article(Base):
     reject_reason: Mapped[str] = mapped_column(String(255), default="")
     is_top: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    publish_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    publish_at: Mapped[datetime | None] = mapped_column(DateTime().with_variant(DATETIME(fsp=6), "mysql"), nullable=True, index=True)
     password: Mapped[str] = mapped_column(String(255), default="")
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), index=True)

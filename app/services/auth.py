@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 from app.core.config import settings
-from app.core.security import hash_password, verify_password, new_token_pair, token_hash
+from app.core.security import hash_password, verify_and_update_password, new_token_pair, token_hash
 from app.models import RefreshToken, User
 
 
@@ -29,10 +29,15 @@ def register(db: Session, username: str, email: str, password: str) -> tuple[Use
 
 def login(db: Session, account: str, password: str, admin: bool = False) -> tuple[User, str, str]:
     user = db.scalar(select(User).where(User.deleted_at.is_(None), or_(User.username == account, User.email == account)))
-    if not user or not user.status or not verify_password(password, user.password_hash):
+    if not user or not user.status:
+        raise AuthError("invalid credentials", 401)
+    valid, upgraded_hash = verify_and_update_password(password, user.password_hash)
+    if not valid:
         raise AuthError("invalid credentials", 401)
     if admin and user.role < 2:
         raise AuthError("editor role required", 403)
+    if upgraded_hash:
+        user.password_hash = upgraded_hash
     access, refresh, digest = new_token_pair(user.id)
     db.add(RefreshToken(token_hash=digest, user_id=user.id, expires_at=datetime.utcnow() + timedelta(days=settings.refresh_token_days)))
     db.commit()
