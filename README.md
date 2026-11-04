@@ -40,6 +40,19 @@ python -m unittest discover -s tests/integration -v
 
 前端使用 Node.js 20.19+ 或 22.12+；静态资源检查需要先在 `web/` 执行 `npm ci` 和 `npm run build`。
 
+浏览器端到端测试仅应连接隔离测试站点：它会创建测试账号、文章和评论，结束时会软删除文章，但测试账号及相关记录仍会保留。先安装 `requirements-dev.txt` 和 Playwright Chromium，再设置隔离站点地址和管理员凭据：
+
+```powershell
+pip install -r requirements-dev.txt
+python -m playwright install chromium
+$env:BLOG_BROWSER_BASE_URL = 'http://127.0.0.1:18081'
+$env:BLOG_BROWSER_ADMIN_USER = '<隔离站点管理员用户名>'
+$env:BLOG_BROWSER_ADMIN_PASSWORD = '<隔离站点管理员密码>'
+python -m unittest discover -s tests/e2e -v
+```
+
+如需使用本机已有的 Chromium 或 Edge，可通过 `BLOG_BROWSER_EXECUTABLE` 指定浏览器可执行文件的完整路径；否则使用 Playwright 安装的 Chromium。未设置上述三个环境变量时测试会跳过。
+
 ## Docker Compose
 
 复制 `.env.example` 为 `.env`，替换所有凭据，然后运行：
