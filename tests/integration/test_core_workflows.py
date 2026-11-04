@@ -5,6 +5,7 @@ import asyncio
 from io import BytesIO
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -230,6 +231,29 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertIn(expected_link, client.get("/sitemap.xml").text)
         self.assertEqual(client.put("/api/admin/settings", headers=admin_headers, json={"quotes": [{"content": "Test quote", "author": "Author"}]}).status_code, 200)
         self.assertEqual(client.get("/api/quote/random").json()["data"], {"content": "Test quote", "author": "Author"})
+
+    def test_article_like_toggle_and_concurrent_requests(self):
+        from sqlalchemy import func, select
+        from app.db.session import SessionLocal
+        from app.models import Article, MetricEvent
+        with SessionLocal() as db:
+            article = Article(title="Like toggle", content="body", author_id=1, category_id=1, status=1)
+            db.add(article)
+            db.commit()
+            article_id = article.id
+        path = f"/api/articles/{article_id}/like"
+        first = self.client.put(path)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["data"], {"likeCount": 1, "already": False})
+        second = self.client.put(path)
+        self.assertEqual(second.json()["data"], {"likeCount": 0, "already": True})
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            responses = list(pool.map(lambda _: self.client.put(path), range(8)))
+        self.assertEqual([r.status_code for r in responses], [200] * 8)
+        with SessionLocal() as db:
+            self.assertEqual(db.get(Article, article_id).like_count, 0)
+            count = db.scalar(select(func.count()).select_from(MetricEvent).where(MetricEvent.article_id == article_id, MetricEvent.kind == "like"))
+            self.assertEqual(count, 0)
 
     def test_comment_nickname_and_moderation_contract(self):
         from app.db.session import SessionLocal

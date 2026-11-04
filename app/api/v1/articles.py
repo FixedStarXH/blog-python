@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import hashlib
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import func, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.api.deps import current_user, get_db, optional_user, require_editor
@@ -85,17 +85,29 @@ def add_view(article_id: int, request: Request, db: Session = Depends(get_db),us
 
 @router.put("/articles/{article_id}/like")
 def like_article(article_id: int, request: Request, db: Session = Depends(get_db),user: User|None=Depends(optional_user)):
-    a = db.get(Article, article_id)
-    if not a or a.status != 1 or a.deleted_at or (a.publish_at and a.publish_at > datetime.utcnow()):
+    # Serialize toggles on the article row, including when a visitor has not
+    # liked it yet. SQLite obtains its write lock from this UPDATE as well.
+    locked = db.execute(update(Article).where(Article.id == article_id, *visible_conditions()).values(like_count=Article.like_count, updated_at=Article.updated_at))
+    if not locked.rowcount:
+        db.rollback()
         raise DomainError("article not found", 404)
     raw=f"user:{user.id}" if user else f"ip:{request.client.host if request.client else 'unknown'}"
     fingerprint=hashlib.sha256(raw.encode()).hexdigest()
     try:
-        db.add(MetricEvent(article_id=article_id, kind="like", fingerprint=fingerprint));db.flush()
-        db.execute(update(Article).where(Article.id==article_id).values(like_count=Article.like_count+1));db.commit();db.refresh(a)
-    except IntegrityError:
-        db.rollback();a=db.get(Article,article_id)
-    return envelope({"likeCount": a.like_count})
+        removed = db.execute(delete(MetricEvent).where(MetricEvent.article_id == article_id, MetricEvent.kind == "like", MetricEvent.fingerprint == fingerprint)).rowcount
+        if removed:
+            count = case((Article.like_count > 0, Article.like_count - 1), else_=0)
+        else:
+            db.add(MetricEvent(article_id=article_id, kind="like", fingerprint=fingerprint))
+            db.flush()
+            count = Article.like_count + 1
+        db.execute(update(Article).where(Article.id == article_id).values(like_count=count, updated_at=Article.updated_at))
+        like_count = db.scalar(select(Article.like_count).where(Article.id == article_id).with_for_update())
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return envelope({"likeCount": like_count, "already": bool(removed)})
 
 
 @router.get("/articles/{article_id}/export")

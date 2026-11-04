@@ -55,6 +55,20 @@ class ComposeIntegrationTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/articles/{article_id}").status_code, 404)
         self.request_ok("PUT", f"/api/admin/articles/{article_id}/approve", headers=self.admin)
         self.assertEqual(self.request_ok("GET", f"/api/articles/{article_id}").json()["data"]["content"], content)
+        first_like = self.request_ok("PUT", f"/api/articles/{article_id}/like").json()["data"]
+        self.assertEqual(first_like, {"likeCount": 1, "already": False})
+        self.assertEqual(self.request_ok("PUT", f"/api/articles/{article_id}/like").json()["data"], {"likeCount": 0, "already": True})
+
+        def toggle_like(use_auth):
+            response = httpx.put(self.base_url + f"/api/articles/{article_id}/like", headers=headers if use_auth else {}, timeout=30)
+            response.raise_for_status()
+            return response.json()["data"]
+
+        for use_auth in (False, True):
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = list(pool.map(toggle_like, [use_auth] * 8))
+            self.assertEqual(sum(result["already"] for result in results), 4)
+            self.assertEqual(self.request_ok("GET", f"/api/articles/{article_id}").json()["data"]["likeCount"], 0)
         for _ in range(2):
             self.assertEqual(self.request_ok("PUT", f"/api/articles/{article_id}/view").json()["data"]["viewCount"], 1)
 
