@@ -12,6 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY alembic.ini ./
 COPY app ./app
+COPY scripts ./scripts
 COPY --from=frontend /src/dist ./dist
 RUN adduser --system --group --no-create-home appuser && mkdir -p uploads && chown appuser:appuser uploads
 USER appuser

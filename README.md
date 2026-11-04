@@ -59,3 +59,16 @@ docker compose up --build
 - 健康检查为 `/health`，依赖就绪检查为 `/ready`。
 
 需求验收与迁移差异见 `docs/需求规格说明.md` 和 `docs/目标架构与目录设计.md`。
+
+## 导入 Go 版数据
+
+先备份 Go 数据库和 `uploads/` 文件，停掉向目标库写入的服务。目标库必须是独立、已执行 `alembic upgrade head` 且尚未执行种子初始化的空库。通过环境变量设置 `BLOG_GO_DATABASE_URL` 和 `BLOG_DATABASE_URL`，然后在项目根目录执行：
+
+```powershell
+python -m scripts.import_go          # 只检查并输出数量，不写入目标库
+python -m scripts.import_go --apply  # 将检查通过的数据作为单个事务导入
+```
+
+导入保留主键和关联；Go 用户 bcrypt 密码在登录成功后升级为 Argon2，私密文章的旧口令在导入时转换为 Argon2。旧浏览记录如果同一文章和访客出现多次，会按当前去重规则合并，脚本会在 `skipped` 中报告数量；文章的原有总浏览数保留。非公开文章的旧向量块不会导入。图片数据库记录不会复制图片文件，需要将 Go 项目的 `uploads/` 内容复制到 Python 项目的上传目录。
+
+Go 版允许部分软删除名称重复，而 Python 当前库要求用户名、邮箱、分类名及标签名全局唯一；若存在重复，脚本会中止并要求先处理。实际切换前应在备份副本上核对记录数量、图片和登录流程。
