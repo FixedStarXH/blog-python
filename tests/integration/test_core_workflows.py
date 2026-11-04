@@ -186,6 +186,76 @@ class CoreWorkflowTests(unittest.TestCase):
             self.assertEqual(chunk.content, "new text")
             self.assertEqual(chunk.embedding_model, settings.embedding_model)
 
+    def test_ai_provider_summary_index_and_streaming(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from threading import Thread
+        from sqlalchemy import select
+        from app.core.config import settings
+        from app.db.session import SessionLocal
+        from app.models import Article, ArticleChunk
+        from app.rag.indexing import index_article
+
+        requests = []
+
+        class Provider(BaseHTTPRequestHandler):
+            def do_POST(self):
+                payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                requests.append((self.path, payload, self.headers.get("Authorization")))
+                if self.path.endswith("/embeddings"):
+                    data = {"data": [{"embedding": [1.0, 0.0]} for _ in payload["input"]]}
+                    body = json.dumps(data).encode()
+                    content_type = "application/json"
+                elif payload.get("stream"):
+                    body = b'data: {"choices":[{"delta":{"content":"answer"}}]}\n\ndata: [DONE]\n\n'
+                    content_type = "text/event-stream"
+                else:
+                    body = json.dumps({"choices": [{"message": {"content": "mock summary"}}]}).encode()
+                    content_type = "application/json"
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_port}/v1"
+            with patch.object(settings, "chat_base_url", url), patch.object(settings, "chat_api_key", "test-key"), \
+                 patch.object(settings, "embedding_base_url", url), patch.object(settings, "embedding_api_key", "test-key"), \
+                 patch.object(settings, "embedding_model", "mock-model"), patch.object(settings, "embedding_dimension", 2):
+                admin = self.client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
+                headers = {"Authorization": "Bearer " + admin["accessToken"]}
+                response = self.client.post("/api/ai/summary", headers=headers, json={"content": "article content"})
+                self.assertEqual(response.json()["data"]["summary"], "mock summary")
+                with SessionLocal() as db:
+                    article = Article(title="AI test", content="searchable excerpt", author_id=1, category_id=1, status=1)
+                    db.add(article)
+                    db.commit()
+                    article_id = article.id
+                    self.assertEqual(asyncio.run(index_article(db, article)), 1)
+                response = self.client.post("/api/ai/ask", json={"question": "question", "articleId": article_id})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertIn('"delta": "answer"', response.text)
+                self.assertIn("data: [DONE]", response.text)
+                sent_chat = [payload for path, payload, _ in requests if path.endswith("/chat/completions") and payload.get("stream")][-1]
+                self.assertIn("searchable excerpt", sent_chat["messages"][0]["content"])
+                self.assertTrue(all(auth == "Bearer test-key" for _, _, auth in requests))
+                with SessionLocal() as db:
+                    article = db.get(Article, article_id)
+                    article.content = ""
+                    db.commit()
+                    self.assertEqual(asyncio.run(index_article(db, article)), 0)
+                    self.assertIsNone(db.scalar(select(ArticleChunk).where(ArticleChunk.article_id == article_id)))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def test_seed_restores_missing_setting_without_overwriting_existing_values(self):
         from app.db.seed import seed
         from app.db.session import SessionLocal

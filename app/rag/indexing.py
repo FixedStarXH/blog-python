@@ -13,7 +13,10 @@ async def index_article(db: Session, article: Article):
     if article.status!=1 or article.password or article.deleted_at or (article.publish_at and article.publish_at > datetime.utcnow()):
         db.execute(delete(ArticleChunk).where(ArticleChunk.article_id==article.id)); db.commit(); return 0
     chunks=split_chunks(article.content)
-    if not chunks: return 0
+    if not chunks:
+        db.execute(delete(ArticleChunk).where(ArticleChunk.article_id==article.id))
+        db.commit()
+        return 0
     vectors=await embed(chunks)
     rows=[ArticleChunk(article_id=article.id,chunk_index=i,content=chunk,embedding=json.dumps(vec).encode(),embedding_model=settings.embedding_model,embedding_dim=len(vec),content_hash=hashlib.sha256(chunk.encode()).hexdigest(),indexed_at=datetime.utcnow()) for i,(chunk,vec) in enumerate(zip(chunks,vectors))]
     try:
