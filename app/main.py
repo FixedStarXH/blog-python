@@ -65,7 +65,9 @@ async def request_context(request: Request, call_next):
     if request.method=="GET" and request.headers.get("authorization") is None and _cacheable(request.url.path) and cache:
         try:
             version=await cache.get("blog:http:version") or "0"
-            cache_key=f"blog:http:{version}:{request.url.path}?{request.url.query}"
+            # A new namespace prevents older cached, unsanitized article bodies
+            # from being served after the HTML filtering change is deployed.
+            cache_key=f"blog:http:v2:{version}:{request.url.path}?{request.url.query}"
             cached=await cache.get(cache_key)
             if cached:
                 item=json.loads(cached)

@@ -132,6 +132,70 @@ class CoreWorkflowTests(unittest.TestCase):
         cleared_by_author = client.put(f"/api/my/articles/{article_id}", headers=author, json={**payload, "clearPassword": True})
         self.assertFalse(cleared_by_author.json()["data"]["hasPassword"])
 
+    def test_public_article_html_is_sanitized_including_legacy_and_private_content(self):
+        from app.core.security import hash_password
+        from app.db.session import SessionLocal
+        from app.models import Article
+        content = ('<h2>Safe heading</h2><p>Hello <strong>world</strong></p>'
+                   '<pre><code class="language-python" onclick="evil()">print(1)</code></pre>'
+                   '<a href="javascript:alert(1)">unsafe link</a>'
+                   '<img src="/uploads/safe.png" onerror="alert(1)">'
+                   '<svg onload="alert(1)"></svg><script>alert(1)</script>')
+        with SessionLocal() as db:
+            public = Article(title="Legacy HTML", content=content, author_id=1, category_id=1, status=1)
+            private = Article(title="Private HTML", content=content, author_id=1, category_id=1, status=1, password=hash_password("secret-password"))
+            db.add_all([public, private])
+            db.commit()
+            public_id, private_id = public.id, private.id
+        client = self.client
+        locked = client.get(f"/api/articles/{private_id}").json()["data"]
+        self.assertTrue(locked["needPassword"])
+        self.assertTrue(locked["hasPassword"])
+        self.assertNotIn("content", locked)
+        public_content = client.get(f"/api/articles/{public_id}").json()["data"]["content"]
+        unlocked = client.post(f"/api/articles/{private_id}/unlock", json={"password": "secret-password"}).json()["data"]["content"]
+        for result in (public_content, unlocked):
+            self.assertIn("<h2>Safe heading</h2>", result)
+            self.assertIn('<code class="language-python">', result)
+            self.assertIn('src="/uploads/safe.png"', result)
+            for forbidden in ("<script", "<svg", "onerror", "onclick", "javascript:"):
+                self.assertNotIn(forbidden, result.lower())
+        admin = client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
+        editor = {"Authorization": "Bearer " + admin["accessToken"]}
+        self.assertEqual(client.get(f"/api/admin/articles/{public_id}", headers=editor).json()["data"]["content"], content)
+
+    def test_article_cache_does_not_reuse_unsanitized_legacy_entries(self):
+        from app.db.session import SessionLocal
+        from app.models import Article
+        with SessionLocal() as db:
+            article = Article(title="Cached legacy", content='<p>Safe</p><img src=x onerror="alert(1)">', author_id=1, category_id=1, status=1)
+            db.add(article)
+            db.commit()
+            article_id = article.id
+        path = f"/api/articles/{article_id}"
+
+        class Cache:
+            def __init__(self):
+                self.values = {f"blog:http:0:{path}?": json.dumps({"status": 200, "body": {"data": {"content": "<script>unsafe</script>"}}})}
+
+            async def get(self, key):
+                return self.values.get(key)
+
+            async def set(self, key, value, ex=None):
+                self.values[key] = value
+
+        old_redis = self.app.state.redis
+        self.app.state.redis = Cache()
+        try:
+            first = self.client.get(path)
+            self.assertEqual(first.headers["X-Cache"], "MISS")
+            self.assertNotIn("onerror", first.json()["data"]["content"])
+            second = self.client.get(path)
+            self.assertEqual(second.headers["X-Cache"], "HIT")
+            self.assertEqual(second.json()["data"]["content"], first.json()["data"]["content"])
+        finally:
+            self.app.state.redis = old_redis
+
     def test_unknown_api_uses_json_for_read_and_write(self):
         for method in ("GET", "POST", "PUT", "DELETE"):
             with self.subTest(method=method):

@@ -110,7 +110,7 @@ function renderArticle() {
   const wrap = document.getElementById('article-wrap');
 
   // 有密码且未解锁 → 显示锁
-  if (a.hasPassword && !sessionStorage.getItem('unlock_' + a.id)) {
+  if ((a.needPassword || a.hasPassword) && !sessionStorage.getItem('unlock_v2_' + a.id)) {
     wrap.innerHTML = `
       <div class="lock" style="grid-column:1/13">
         <div class="box">
@@ -128,8 +128,8 @@ function renderArticle() {
     return;
   }
 
-  const content = (a.needPassword && sessionStorage.getItem('unlock_' + a.id) === '1')
-    ? sessionStorage.getItem('unlock_content_' + a.id) || a.content
+  const content = (a.needPassword && sessionStorage.getItem('unlock_v2_' + a.id) === '1')
+    ? sessionStorage.getItem('unlock_content_v2_' + a.id) || a.content
     : a.content;
 
   // 字数统计：去掉 HTML 标签后的纯文本字数
@@ -200,7 +200,7 @@ function renderArticle() {
           <div class="emoji-panel" id="emoji-panel"></div>
         </div>
         <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-size:12px;color:var(--gray-a);">评论免审核，直接展示</span>
+          <span style="font-size:12px;color:var(--gray-a);">评论提交后将在审核通过时展示</span>
           <button class="submit" type="submit">发表评论</button>
         </div>
       </form>
@@ -493,8 +493,8 @@ async function tryUnlock() {
   const pwd = document.getElementById('lock-input').value;
   try {
     const data = await api.post('/api/articles/' + id + '/unlock', { password: pwd });
-    sessionStorage.setItem('unlock_' + id, '1');
-    sessionStorage.setItem('unlock_content_' + id, data.content);
+    sessionStorage.setItem('unlock_v2_' + id, '1');
+    sessionStorage.setItem('unlock_content_v2_' + id, data.content);
     location.reload();
   } catch (e) {
     document.getElementById('lock-err').style.display = 'block';

@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.api.deps import current_user, get_db, optional_user, require_editor
 from app.core.errors import DomainError, envelope
+from app.core.html import sanitize_article_html
 from app.core.security import hash_password, verify_password
 from app.models import Article, Category, ColumnModel, MetricEvent, Tag, User
 from app.repositories.articles import page_public, visible_conditions
@@ -14,10 +15,10 @@ from app.schemas.common import ArticleInput
 router = APIRouter()
 
 
-def article_data(a: Article, content=True):
+def article_data(a: Article, content=True, public_content=False):
     result = {"id": a.id, "title": a.title, "summary": a.summary, "coverImage": a.cover_image, "sourceUrl": a.source_url, "authorId": a.author_id, "author": {"id": a.author.id, "username": a.author.username, "nickname": a.author.nickname} if a.author else None, "categoryId": a.category_id, "category": {"id": a.category.id, "name": a.category.name} if a.category and not a.category.deleted_at else None, "tags": [{"id": t.id, "name": t.name} for t in a.tags if not t.deleted_at], "status": a.status, "viewCount": a.view_count, "likeCount": a.like_count, "isTop": a.is_top, "isFeatured": a.is_featured, "publishAt": a.publish_at.isoformat() if a.publish_at else None, "createdAt": a.created_at.isoformat()}
     if content:
-        result["content"] = a.content
+        result["content"] = sanitize_article_html(a.content) if public_content else a.content
         result["rejectReason"] = a.reject_reason
         result["hasPassword"] = bool(a.password)
         result["password"] = ""  # Never expose a stored private-article password hash.
@@ -42,8 +43,8 @@ def public_article(article_id: int, db: Session = Depends(get_db)):
     if not a:
         raise DomainError("article not found", 404)
     if a.password:
-        return envelope({"id": a.id, "title": a.title, "needPassword": True})
-    return envelope(article_data(a))
+        return envelope({"id": a.id, "title": a.title, "needPassword": True, "hasPassword": True})
+    return envelope(article_data(a, public_content=True))
 
 
 @router.post("/articles/{article_id}/unlock")
@@ -51,7 +52,7 @@ def unlock_article(article_id: int, body: dict, db: Session = Depends(get_db)):
     a = db.scalar(select(Article).where(Article.id == article_id, *visible_conditions()))
     if not a or not a.password or not verify_password(str(body.get("password", "")), a.password):
         raise DomainError("article password is incorrect", 403)
-    return envelope(article_data(a))
+    return envelope(article_data(a, public_content=True))
 
 
 @router.get("/articles/{article_id}/nav")
