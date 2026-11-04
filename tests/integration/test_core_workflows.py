@@ -134,6 +134,66 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(client.put("/api/admin/settings", headers=admin_headers, json={"quotes": [{"content": "Test quote", "author": "Author"}]}).status_code, 200)
         self.assertEqual(client.get("/api/quote/random").json()["data"], {"content": "Test quote", "author": "Author"})
 
+    def test_comment_nickname_and_moderation_contract(self):
+        from app.db.session import SessionLocal
+        from app.models import Article
+        with SessionLocal() as db:
+            article = Article(title="Comment contract", content="content", author_id=1, category_id=1, status=1)
+            db.add(article)
+            db.commit()
+            article_id = article.id
+        client = self.client
+        tokens = client.post("/api/auth/register", json={"username": "comment_user", "email": "comment_user@example.test", "password": "password123"}).json()["data"]
+        author = {"Authorization": "Bearer " + tokens["accessToken"]}
+        admin = client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
+        editor = {"Authorization": "Bearer " + admin["accessToken"]}
+        path = f"/api/articles/{article_id}/comments"
+        explicit = client.post(path, headers=author, json={"content": "first", "nickname": "Chosen name"})
+        self.assertEqual(explicit.status_code, 201, explicit.text)
+        comment = explicit.json()["data"]
+        self.assertEqual(comment["nickname"], "Chosen name")
+        fallback = client.post(path, headers=author, json={"content": "second", "nickname": ""})
+        self.assertEqual(fallback.status_code, 201, fallback.text)
+        self.assertEqual(fallback.json()["data"]["nickname"], "comment_user")
+        guest = client.post(path, json={"content": "guest", "nickname": ""})
+        self.assertEqual(guest.json()["data"]["nickname"], "游客")
+        status_path = f"/api/admin/comments/{comment['id']}/status"
+        for invalid in ({}, {"status": 9}):
+            self.assertEqual(client.put(status_path, headers=editor, json=invalid).status_code, 422)
+        for invalid in ({"ids": [comment["id"]], "action": "unknown"}, {"ids": [], "action": "approve"}):
+            self.assertEqual(client.post("/api/admin/comments/batch", headers=editor, json=invalid).status_code, 422)
+        self.assertEqual(client.get(path).json()["data"]["total"], 0)
+        self.assertEqual(client.post("/api/admin/comments/batch", headers=editor, json={"ids": [str(comment["id"])], "action": "approve"}).status_code, 200)
+        self.assertEqual(client.get(path).json()["data"]["total"], 1)
+        self.assertEqual(client.put(status_path, headers=editor, json={"status": 0}).status_code, 200)
+        self.assertEqual(client.get(path).json()["data"]["total"], 0)
+        all_comments = client.get("/api/admin/comments?status=-1", headers=editor).json()["data"]["list"]
+        self.assertIn(comment["id"], [row["id"] for row in all_comments])
+
+    def test_public_statistics_exclude_unlisted_articles(self):
+        from app.db.session import SessionLocal
+        from app.models import Article, Category
+        with SessionLocal() as db:
+            category = Category(name="Public statistics")
+            db.add(category)
+            db.flush()
+            db.add_all([
+                Article(title="Visible stats", content="body", author_id=1, category_id=category.id, status=1, view_count=3),
+                Article(title="Draft stats", content="body", author_id=1, category_id=category.id, status=0, view_count=5),
+                Article(title="Private stats", content="body", author_id=1, category_id=category.id, status=1, password="secret", view_count=7),
+                Article(title="Future stats", content="body", author_id=1, category_id=category.id, status=1, publish_at=datetime.utcnow() + timedelta(days=1), view_count=11),
+            ])
+            db.commit()
+            category_id = category.id
+        listing = self.client.get(f"/api/articles?categoryId={category_id}").json()["data"]
+        categories = self.client.get("/api/categories").json()["data"]
+        self.assertEqual(listing["total"], 1)
+        self.assertEqual(next(c for c in categories if c["id"] == category_id)["articleCount"], listing["total"])
+        site = self.client.get("/api/site").json()["data"]["stats"]
+        public = self.client.get("/api/articles?pageSize=50").json()["data"]
+        self.assertEqual(site["articleCount"], public["total"])
+        self.assertEqual(site["viewCount"], sum(a["viewCount"] for a in public["list"]))
+
     def test_rag_only_uses_public_article_chunks(self):
         from app.db.session import SessionLocal
         from app.models import Article, ArticleChunk

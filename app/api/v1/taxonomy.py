@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_editor
 from app.core.errors import DomainError, envelope
 from app.models import Article, Category, Tag, User
+from app.repositories.articles import visible_conditions
 
 router = APIRouter()
 
@@ -11,7 +12,7 @@ router = APIRouter()
 @router.get("/categories")
 def categories(db: Session = Depends(get_db)):
     rows = db.scalars(select(Category).where(Category.deleted_at.is_(None)).order_by(Category.sort, Category.id)).all()
-    return envelope([{"id": x.id, "name": x.name, "description": x.description, "sort": x.sort, "articleCount": db.scalar(select(func.count(Article.id)).where(Article.category_id == x.id, Article.deleted_at.is_(None))) or 0} for x in rows])
+    return envelope([{"id": x.id, "name": x.name, "description": x.description, "sort": x.sort, "articleCount": db.scalar(select(func.count(Article.id)).where(Article.category_id == x.id, *visible_conditions(), Article.password == "")) or 0} for x in rows])
 
 
 @router.get("/tags")

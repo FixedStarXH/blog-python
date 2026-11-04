@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.errors import envelope
 from app.models import Article, Category, Link, SiteSetting, Tag, User
 from app.core.sensitive import SENSITIVE_WORDS
-from app.repositories.articles import public_query
+from app.repositories.articles import public_query, visible_conditions
 
 router = APIRouter()
 
@@ -33,9 +33,10 @@ def public_settings(db: Session = Depends(get_db)):
 @router.get("/site")
 def site_info(db: Session = Depends(get_db)):
     settings_data = public_settings(db)["data"]
-    count=db.scalar(select(func.count(Article.id)).where(Article.status==1,Article.deleted_at.is_(None))) or 0
-    views=db.scalar(select(func.coalesce(func.sum(Article.view_count),0)).where(Article.status==1,Article.deleted_at.is_(None))) or 0
-    earliest=db.scalar(select(func.min(Article.created_at)).where(Article.status==1,Article.deleted_at.is_(None)))
+    public_filters = (*visible_conditions(), Article.password == "")
+    count=db.scalar(select(func.count(Article.id)).where(*public_filters)) or 0
+    views=db.scalar(select(func.coalesce(func.sum(Article.view_count),0)).where(*public_filters)) or 0
+    earliest=db.scalar(select(func.min(Article.created_at)).where(*public_filters))
     settings_data.update({"title":settings_data.get("site_title",""),"github":settings_data.get("social_github",""),"email":settings_data.get("social_email",""),"stats":{"articleCount":count,"viewCount":views,"foundYear":earliest.year if earliest else datetime.utcnow().year}})
     return envelope(settings_data)
 

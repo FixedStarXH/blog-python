@@ -1,3 +1,4 @@
+from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -32,8 +33,17 @@ class AdminArticleInput(ArticleInput):
 
 class CommentInput(APIModel):
     content: str = Field(min_length=1, max_length=1000)
-    nickname: str = Field(default="游客", min_length=1, max_length=20)
+    nickname: str = Field(default="", max_length=20)
     parent_id: int | None = Field(default=None, alias="parentId")
+
+
+class CommentStatusInput(APIModel):
+    status: Literal[0, 1, 2]
+
+
+class CommentBatchInput(APIModel):
+    ids: list[Annotated[int, Field(gt=0)]] = Field(min_length=1)
+    action: Literal["approve", "delete"]
 
 
 class TokenRefresh(APIModel):
