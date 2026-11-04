@@ -19,6 +19,7 @@ def article_data(a: Article, content=True):
     if content:
         result["content"] = a.content
         result["rejectReason"] = a.reject_reason
+        result["hasPassword"] = bool(a.password)
         result["password"] = ""  # Never expose a stored private-article password hash.
     return result
 
@@ -142,8 +143,11 @@ def update_my_article(article_id: int, body: ArticleInput, user: User = Depends(
     if not a: raise DomainError("article not found", 404)
     if not db.get(Category,body.category_id): raise DomainError("category not found",400)
     if body.column_id and not db.scalar(select(ColumnModel.id).where(ColumnModel.id==body.column_id,ColumnModel.author_id==user.id,ColumnModel.deleted_at.is_(None))): raise DomainError("column not found",400)
-    for attr, value in (("title", body.title), ("content", body.content), ("summary", body.summary), ("cover_image", body.cover_image), ("source_url", body.source_url), ("password", hash_password(body.password) if body.password else ""), ("category_id", body.category_id), ("column_id", body.column_id)):
+    if body.clear_password and body.password: raise DomainError("choose a new password or clear the existing password")
+    for attr, value in (("title", body.title), ("content", body.content), ("summary", body.summary), ("cover_image", body.cover_image), ("source_url", body.source_url), ("category_id", body.category_id), ("column_id", body.column_id)):
         setattr(a, attr, value)
+    if body.clear_password: a.password = ""
+    elif body.password: a.password = hash_password(body.password)
     a.publish_at=_parse_datetime(body.publish_at)
     a.tags = db.scalars(select(Tag).where(Tag.id.in_(body.tag_ids), Tag.deleted_at.is_(None))).all() if body.tag_ids else []
     if len(a.tags)!=len(set(body.tag_ids)): raise DomainError("one or more tags were not found",400)

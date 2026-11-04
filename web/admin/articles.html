@@ -147,8 +147,15 @@
             <input type="datetime-local" id="a-publishAt">
           </div>
           <div class="field">
-            <label>私密密码(留空=公开)</label>
-            <input type="text" id="a-password" placeholder="留空则公开">
+            <label for="a-password">私密密码</label>
+            <input type="text" id="a-password" aria-describedby="a-password-help">
+            <small id="a-password-help">新文章留空为公开文章；编辑时留空保留原密码。</small>
+          </div>
+          <div id="a-clearPassword-field" hidden>
+            <div class="field check">
+              <input type="checkbox" id="a-clearPassword">
+              <label for="a-clearPassword" style="margin:0;">移除原密码，公开文章</label>
+            </div>
           </div>
           <div class="field check">
             <input type="checkbox" id="a-isTop">
@@ -285,6 +292,8 @@
       ['a-title', 'a-summary', 'a-coverImage', 'a-content', 'a-tagIds', 'a-publishAt', 'a-password'].forEach(id => document.getElementById(id).value = '');
       document.getElementById('a-isTop').checked = false;
       document.getElementById('a-isFeatured').checked = false;
+      document.getElementById('a-clearPassword').checked = false;
+      document.getElementById('a-clearPassword-field').hidden = true;
       document.getElementById('a-status').value = '1';
       await loadCatsForForm();
       document.getElementById('a-title').focus();
@@ -305,7 +314,9 @@
         document.getElementById('a-status').value = a.status;
         document.getElementById('a-isTop').checked = !!a.isTop;
         document.getElementById('a-isFeatured').checked = !!a.isFeatured;
-        document.getElementById('a-password').value = a.password || '';
+        document.getElementById('a-password').value = '';
+        document.getElementById('a-clearPassword').checked = false;
+        document.getElementById('a-clearPassword-field').hidden = !a.hasPassword;
         document.getElementById('a-tagIds').value = (a.tags || []).map(t => t.id).join(',');
         if (a.publishAt) {
           const d = new Date(a.publishAt);
@@ -378,9 +389,14 @@
         isTop: document.getElementById('a-isTop').checked,
         isFeatured: document.getElementById('a-isFeatured').checked,
         password: document.getElementById('a-password').value.trim() || '',
+        clearPassword: document.getElementById('a-clearPassword').checked,
         tagIds: document.getElementById('a-tagIds').value.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)),
         publishAt: document.getElementById('a-publishAt').value ? new Date(document.getElementById('a-publishAt').value).toISOString() : null,
       };
+      if (payload.password && payload.clearPassword) {
+        toast('请输入新密码或选择移除原密码，不能同时选择', true);
+        return;
+      }
       try {
         if (id) await api.put('/api/admin/articles/' + id, payload);
         else await api.post('/api/admin/articles', payload);

@@ -58,13 +58,15 @@ def update_article(article_id: int, body: AdminArticleInput, db: Session = Depen
     body=body.model_dump(by_alias=True)
     a = db.get(Article, article_id)
     if not a or a.deleted_at: raise DomainError("article not found", 404)
-    fields = {"title":"title", "content":"content", "summary":"summary", "coverImage":"cover_image", "sourceUrl":"source_url", "password":"password", "categoryId":"category_id", "status":"status", "isTop":"is_top", "isFeatured":"is_featured", "publishAt":"publish_at"}
+    if body["clearPassword"] and body["password"]: raise DomainError("choose a new password or clear the existing password")
+    fields = {"title":"title", "content":"content", "summary":"summary", "coverImage":"cover_image", "sourceUrl":"source_url", "categoryId":"category_id", "status":"status", "isTop":"is_top", "isFeatured":"is_featured", "publishAt":"publish_at"}
     for key, attr in fields.items():
         if key in body:
             value=body[key]
-            if key=="password": value=hash_password(value) if value else ""
             if key=="publishAt": value=_parse_datetime(value)
             setattr(a, attr, value)
+    if body["clearPassword"]: a.password = ""
+    elif body["password"]: a.password = hash_password(body["password"])
     if "categoryId" in body and not db.get(Category,a.category_id): raise DomainError("category not found",400)
     if "tagIds" in body:
         a.tags=db.scalars(select(Tag).where(Tag.id.in_(body["tagIds"]),Tag.deleted_at.is_(None))).all()

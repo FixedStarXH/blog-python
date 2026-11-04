@@ -99,6 +99,39 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(client.post("/api/ai/ask", json={"question": "What?", "articleId": article_id}).status_code, 404)
         self.assertNotIn(article_id, [item["id"] for item in client.get("/api/articles").json()["data"]["list"]])
 
+    def test_private_article_password_is_preserved_until_explicitly_cleared(self):
+        client = self.client
+        tokens = client.post("/api/auth/register", json={"username": "privacy_author", "email": "privacy_author@example.test", "password": "password123"}).json()["data"]
+        author = {"Authorization": "Bearer " + tokens["accessToken"]}
+        admin = client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
+        editor = {"Authorization": "Bearer " + admin["accessToken"]}
+        payload = {"title": "Private editing", "content": "secret body", "categoryId": 1, "password": "original-secret"}
+        created = client.post("/api/my/articles", headers=author, json=payload)
+        self.assertEqual(created.status_code, 201, created.text)
+        article_id = created.json()["data"]["id"]
+        self.assertTrue(created.json()["data"]["hasPassword"])
+        self.assertEqual(client.put(f"/api/admin/articles/{article_id}/approve", headers=editor).status_code, 200)
+        payload["password"] = ""
+        payload["title"] = "Edited by author"
+        updated = client.put(f"/api/my/articles/{article_id}", headers=author, json=payload)
+        self.assertTrue(updated.json()["data"]["hasPassword"])
+        self.assertTrue(client.get(f"/api/articles/{article_id}").json()["data"]["needPassword"])
+        self.assertEqual(client.post(f"/api/articles/{article_id}/unlock", json={"password": "original-secret"}).status_code, 200)
+        updated = client.put(f"/api/admin/articles/{article_id}", headers=editor, json=payload)
+        self.assertTrue(updated.json()["data"]["hasPassword"])
+        self.assertEqual(client.post(f"/api/articles/{article_id}/unlock", json={"password": "original-secret"}).status_code, 200)
+        conflict = client.put(f"/api/admin/articles/{article_id}", headers=editor, json={**payload, "password": "new-secret", "clearPassword": True})
+        self.assertEqual(conflict.status_code, 400)
+        self.assertTrue(client.get(f"/api/articles/{article_id}").json()["data"]["needPassword"])
+        cleared = client.put(f"/api/admin/articles/{article_id}", headers=editor, json={**payload, "clearPassword": True})
+        self.assertEqual(cleared.status_code, 200, cleared.text)
+        self.assertFalse(cleared.json()["data"]["hasPassword"])
+        self.assertEqual(client.get(f"/api/articles/{article_id}").json()["data"]["content"], "secret body")
+        protected = client.put(f"/api/my/articles/{article_id}", headers=author, json={**payload, "password": "new-secret"})
+        self.assertTrue(protected.json()["data"]["hasPassword"])
+        cleared_by_author = client.put(f"/api/my/articles/{article_id}", headers=author, json={**payload, "clearPassword": True})
+        self.assertFalse(cleared_by_author.json()["data"]["hasPassword"])
+
     def test_unknown_api_uses_json_for_read_and_write(self):
         for method in ("GET", "POST", "PUT", "DELETE"):
             with self.subTest(method=method):

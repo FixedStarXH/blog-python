@@ -19,6 +19,7 @@ class ArticleInput(APIModel):
     cover_image: str = Field(default="", max_length=255, alias="coverImage")
     source_url: str = Field(default="", max_length=255, alias="sourceUrl")
     password: str = Field(default="", max_length=255)
+    clear_password: bool = Field(default=False, alias="clearPassword")
     category_id: int = Field(alias="categoryId", gt=0)
     tag_ids: list[int] = Field(default_factory=list, alias="tagIds")
     column_id: int | None = Field(default=None, alias="columnId")
