@@ -734,11 +734,11 @@ async function submitComment(e) {
     await api.post(`/api/articles/${id}/comments`, {
       content, nickname: name, parentId: replyParent,
     });
-    toast('评论已发布');
+    toast('评论已提交，审核通过后展示');
     document.getElementById('c-content').value = '';
     replyParent = null;
     document.getElementById('c-content').placeholder = '写下你的评论…';
-    loadComments(); // 立即刷新评论列表（免审核，直接展示）
+    loadComments();
   } catch (err) {
     toast(err.message, true);
   }

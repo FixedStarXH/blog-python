@@ -37,7 +37,7 @@ def create_comment(article_id: int, body: CommentInput, request: Request, db: Se
         raise DomainError("parent comment not found", 404)
     nickname = body.nickname or (user.nickname or user.username if user else "游客")
     c = Comment(article_id=article_id, user_id=user.id if user else None, nickname=filter_sensitive(nickname or "游客"), content=filter_sensitive(body.content), parent_id=parent_id, status=0)
-    db.add(c); db.commit(); db.refresh(c); return envelope(comment_dict(c), "comment submitted for review", 201)
+    db.add(c); db.commit(); db.refresh(c); return envelope(comment_dict(c), "comment submitted for review")
 
 
 @router.put("/articles/{article_id}/comments/{comment_id}/like")

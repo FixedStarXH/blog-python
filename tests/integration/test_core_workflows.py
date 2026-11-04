@@ -222,6 +222,7 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(client.put(f"/api/articles/{article_id}/view").json()["data"]["viewCount"], 1)
         comment = client.post(f"/api/articles/{article_id}/comments", json={"content": "Hello", "nickname": "Visitor"})
         self.assertEqual(comment.status_code, 201, comment.text)
+        self.assertEqual(comment.json()["code"], 200)
         comment_id = comment.json()["data"]["id"]
         self.assertEqual(client.get(f"/api/articles/{article_id}/comments").json()["data"]["total"], 0)
         self.assertEqual(client.put(f"/api/admin/comments/{comment_id}/approve", headers=admin_headers).status_code, 200)
