@@ -83,6 +83,66 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(client.delete(f"/api/my/articles/{article_id}", headers=author).status_code, 200)
         self.assertEqual(client.get(f"/api/articles/{article_id}").status_code, 404)
 
+    def test_public_list_search_and_featured_paging(self):
+        from app.db.session import SessionLocal
+        from app.models import Article
+        with SessionLocal() as db:
+            rows = [Article(title=f"Card {n}", content="body-only-needle", author_id=1,
+                            category_id=1, status=1, is_featured=True, view_count=n) for n in range(6)]
+            db.add_all(rows)
+            db.add(Article(title="Locked card", content="body-only-needle", author_id=1,
+                           category_id=1, status=1, password="locked", is_featured=True))
+            db.commit()
+            ids = [row.id for row in rows]
+        result = self.client.get("/api/articles", params={"keyword": "body-only-needle", "sort": "hot",
+                                                          "categoryId": 1, "authorId": 1}).json()["data"]
+        self.assertEqual(result["total"], len(ids))
+        self.assertEqual([row["id"] for row in result["list"]], ids[::-1])
+        for row in result["list"]:
+            self.assertNotIn("content", row)
+            self.assertFalse(row["needPassword"])
+        params = {"featured": "true", "seed": 77, "keyword": "ignored-featured-filter"}
+        full = self.client.get("/api/articles", params={**params, "pageSize": 50}).json()["data"]["list"]
+        self.assertTrue(set(ids).issubset({row["id"] for row in full}))
+        pages = []
+        for page in (1, 2):
+            data = self.client.get("/api/articles", params={**params, "page": page, "pageSize": 3}).json()["data"]
+            self.assertEqual(data["page"], page)
+            self.assertEqual(data["pageSize"], 3)
+            pages.extend(data["list"])
+        self.assertEqual(pages, full[:6])
+
+    def test_public_detail_unlock_and_markdown_export_contract(self):
+        from app.db.session import SessionLocal
+        from app.models import Article
+        html = ('<h2>Heading</h2><p><strong>Bold</strong> and <a href="/docs">Docs</a></p>'
+                '<ul><li>Item</li></ul><pre><code class="language-python">a &lt; b</code></pre>'
+                '<script>hidden-script</script>')
+        with SessionLocal() as db:
+            row = Article(title="Export contract", content=html, author_id=1, category_id=1, status=1)
+            db.add(row)
+            db.commit()
+            path = f"/api/articles/{row.id}"
+        detail = self.client.get(path).json()["data"]
+        self.assertFalse(detail["needPassword"])
+        self.assertNotIn("password", detail)
+        self.assertIn("updatedAt", detail)
+        self.assertIn("columnId", detail)
+        unlocked = self.client.post(path + "/unlock", json={"password": "anything"})
+        self.assertEqual(unlocked.json()["data"], detail)
+        for password in ("", 123, None):
+            self.assertEqual(self.client.post(path + "/unlock", json={"password": password}).status_code, 422)
+        self.assertEqual(self.client.post("/api/articles/999999/unlock", json={"password": "any"}).status_code, 404)
+        md = self.client.get(path + "/export").json()["data"]
+        self.assertEqual(self.client.get(path + "/export?format=md").json()["data"], md)
+        self.assertEqual((md["format"], md["title"]), ("md", detail["title"]))
+        for fragment in ("## Heading", "**Bold**", "[Docs](/docs)", "- Item", "```python\na < b\n```"):
+            self.assertIn(fragment, md["content"])
+        self.assertNotIn("hidden-script", md["content"])
+        invalid = self.client.get(path + "/export?format=pdf")
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIsNone(invalid.json()["data"])
+
     def test_future_article_is_hidden_across_public_endpoints(self):
         from app.db.session import SessionLocal
         from app.models import Article

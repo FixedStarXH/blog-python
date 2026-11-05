@@ -2,6 +2,7 @@
 import re
 
 import nh3
+from markdownify import markdownify
 
 
 def _filter_attribute(tag: str, attribute: str, value: str) -> str | None:
@@ -22,3 +23,18 @@ _cleaner = nh3.Cleaner(
 
 def sanitize_article_html(value: str) -> str:
     return _cleaner.clean(value)
+
+
+def _code_language(pre):
+    code = pre.find("code", recursive=False)
+    if code:
+        for name in code.get("class", []):
+            if name.startswith("language-"):
+                return name.removeprefix("language-")
+    return ""
+
+
+def article_markdown(value: str) -> str:
+    content = markdownify(sanitize_article_html(value), heading_style="ATX", bullets="-",
+                          code_language_callback=_code_language, bs4_options={"features": "html.parser"})
+    return content.rstrip() + "\n" if content.strip() else ""

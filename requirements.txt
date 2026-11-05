@@ -11,3 +11,4 @@ python-multipart>=0.0.9,<1
 Pillow>=10,<13
 pymysql[rsa]>=1.1,<2
 nh3>=0.3.7,<0.4
+markdownify==1.2.0

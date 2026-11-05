@@ -32,6 +32,10 @@ class AdminArticleInput(ArticleInput):
     status: int = Field(default=1, ge=0, le=4)
 
 
+class ArticleUnlockInput(APIModel):
+    password: str = Field(min_length=1)
+
+
 class CommentInput(APIModel):
     content: str = Field(min_length=1, max_length=1000)
     nickname: str = Field(default="", max_length=20)

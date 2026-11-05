@@ -6,11 +6,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.api.deps import current_user, get_db, optional_user, require_editor
 from app.core.errors import DomainError, envelope
-from app.core.html import sanitize_article_html
+from app.core.html import article_markdown, sanitize_article_html
 from app.core.security import hash_password, verify_password
 from app.models import Article, Category, ColumnModel, MetricEvent, Tag, User
 from app.repositories.articles import page_public, visible_conditions
-from app.schemas.common import ArticleInput
+from app.schemas.common import ArticleInput, ArticleUnlockInput
 from app.services.view_counts import notify_view
 
 router = APIRouter()
@@ -18,18 +18,23 @@ router = APIRouter()
 
 def article_data(a: Article, content=True, public_content=False):
     result = {"id": a.id, "title": a.title, "summary": a.summary, "coverImage": a.cover_image, "sourceUrl": a.source_url, "authorId": a.author_id, "author": {"id": a.author.id, "username": a.author.username, "nickname": a.author.nickname} if a.author else None, "categoryId": a.category_id, "category": {"id": a.category.id, "name": a.category.name} if a.category and not a.category.deleted_at else None, "tags": [{"id": t.id, "name": t.name} for t in a.tags if not t.deleted_at], "status": a.status, "viewCount": a.view_count, "likeCount": a.like_count, "isTop": a.is_top, "isFeatured": a.is_featured, "publishAt": a.publish_at.isoformat() if a.publish_at else None, "createdAt": a.created_at.isoformat()}
+    result["columnId"] = a.column_id
+    result["updatedAt"] = a.updated_at.isoformat()
+    if public_content:
+        result["needPassword"] = False
     if content:
         result["content"] = sanitize_article_html(a.content) if public_content else a.content
-        result["rejectReason"] = a.reject_reason
+        if not public_content:
+            result["rejectReason"] = a.reject_reason
+            result["password"] = ""  # Compatibility with editor forms.
         result["hasPassword"] = bool(a.password)
-        result["password"] = ""  # Never expose a stored private-article password hash.
     return result
 
 
 @router.get("/articles")
 def public_articles(db: Session = Depends(get_db), keyword: str = "", q: str = "", tag: str = "", featured: bool = False, seed: int=1, categoryId: int | None = None, authorId: int | None = None, sort: str = "latest", page: int = Query(1, ge=1), pageSize: int = Query(10, ge=1, le=50)):
     rows, total = page_public(db, page, pageSize, keyword or q, categoryId, authorId, sort, tag, featured, seed)
-    return envelope({"list": [article_data(a, False) for a in rows], "total": total, "page": page, "pageSize": pageSize})
+    return envelope({"list": [article_data(a, False, public_content=True) for a in rows], "total": total, "page": page, "pageSize": pageSize})
 
 
 @router.get("/articles/hot")
@@ -49,9 +54,11 @@ def public_article(article_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/articles/{article_id}/unlock")
-def unlock_article(article_id: int, body: dict, db: Session = Depends(get_db)):
+def unlock_article(article_id: int, body: ArticleUnlockInput, db: Session = Depends(get_db)):
     a = db.scalar(select(Article).where(Article.id == article_id, *visible_conditions()))
-    if not a or not a.password or not verify_password(str(body.get("password", "")), a.password):
+    if not a:
+        raise DomainError("article not found", 404)
+    if a.password and not verify_password(body.password, a.password):
         raise DomainError("article password is incorrect", 403)
     return envelope(article_data(a, public_content=True))
 
@@ -118,15 +125,13 @@ def like_article(article_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/articles/{article_id}/export")
-def export_article(article_id: int, db: Session = Depends(get_db)):
+def export_article(article_id: int, format: str = "md", db: Session = Depends(get_db)):
     a = db.scalar(select(Article).where(Article.id == article_id, *visible_conditions(), Article.password == ""))
     if not a:
         raise DomainError("article not found", 404)
-    import re, html
-    content=html.unescape(re.sub(r"</(p|h[1-6]|li|blockquote|pre)>\s*", "\n\n", a.content, flags=re.I))
-    content=re.sub(r"<br\s*/?>","\n",content,flags=re.I)
-    content=re.sub(r"<[^>]+>","",content).strip()
-    return envelope({"title":a.title,"content":content,"format":"md"})
+    if format != "md":
+        raise DomainError("unsupported export format")
+    return envelope({"title": a.title, "content": article_markdown(a.content), "format": "md"})
 
 
 @router.get("/my/articles")

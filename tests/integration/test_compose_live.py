@@ -32,6 +32,28 @@ class ComposeIntegrationTests(unittest.TestCase):
         response.raise_for_status()
         return response
 
+    def test_public_article_contract(self):
+        marker = uuid.uuid4().hex
+        category = self.request_ok("GET", "/api/categories").json()["data"][0]["id"]
+        created = self.request_ok("POST", "/api/admin/articles", headers=self.admin, json={
+            "title": "Public API contract", "content": f"<h2>{marker}</h2>", "categoryId": category,
+            "status": 1, "isFeatured": True,
+        }).json()["data"]
+        path = f"/api/articles/{created['id']}"
+        try:
+            cards = self.request_ok("GET", "/api/articles", params={"keyword": marker}).json()["data"]
+            self.assertEqual([row["id"] for row in cards["list"]], [created["id"]])
+            self.assertNotIn("content", cards["list"][0])
+            featured = self.request_ok("GET", "/api/articles", params={"featured": "true", "seed": 12}).json()["data"]
+            self.assertGreater(featured["total"], 0)
+            detail = self.request_ok("GET", path).json()["data"]
+            self.assertFalse(detail["needPassword"])
+            self.assertEqual(self.request_ok("POST", path + "/unlock", json={"password": "any"}).json()["data"], detail)
+            self.assertEqual(self.request_ok("GET", path + "/export").json()["data"]["content"], f"## {marker}\n")
+            self.assertEqual(self.client.get(path + "/export?format=html").status_code, 400)
+        finally:
+            self.request_ok("DELETE", f"/api/admin/articles/{created['id']}", headers=self.admin)
+
     def test_mysql_redis_and_static_workflow(self):
         for path in ("/health", "/ready", "/", "/js/api.js", "/admin/dashboard.html"):
             with self.subTest(path=path):
