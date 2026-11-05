@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import hashlib
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from app.core.security import hash_password, verify_password
 from app.models import Article, Category, ColumnModel, MetricEvent, Tag, User
 from app.repositories.articles import page_public, visible_conditions
 from app.schemas.common import ArticleInput
+from app.services.view_counts import notify_view
 
 router = APIRouter()
 
@@ -67,20 +68,26 @@ def article_nav(article_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/articles/{article_id}/view")
-def add_view(article_id: int, request: Request, db: Session = Depends(get_db),user: User|None=Depends(optional_user)):
+def add_view(article_id: int, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db),user: User|None=Depends(optional_user)):
     a = db.get(Article, article_id)
     if not a or a.status != 1 or a.deleted_at or (a.publish_at and a.publish_at > datetime.utcnow()):
         raise DomainError("article not found", 404)
     raw=f"user:{user.id}" if user else f"ip:{request.client.host if request.client else 'unknown'}"
     fingerprint=hashlib.sha256(raw.encode()).hexdigest()
     try:
-        db.add(MetricEvent(article_id=article_id, kind="view", fingerprint=fingerprint))
+        event = MetricEvent(article_id=article_id, kind="view", fingerprint=fingerprint, counted=False)
+        db.add(event)
         db.flush()
-        db.execute(update(Article).where(Article.id==article_id).values(view_count=Article.view_count+1))
-        db.commit();db.refresh(a)
+        event_id = event.id
+        db.commit()
+        background_tasks.add_task(notify_view, getattr(request.app.state, "redis", None), event_id)
     except IntegrityError:
-        db.rollback();a=db.get(Article,article_id)
-    return envelope({"viewCount": a.view_count})
+        db.rollback()
+        if not db.scalar(select(MetricEvent.id).where(MetricEvent.article_id == article_id, MetricEvent.kind == "view", MetricEvent.fingerprint == fingerprint)):
+            raise
+    pending = select(func.count(MetricEvent.id)).where(MetricEvent.article_id == article_id, MetricEvent.kind == "view", MetricEvent.counted.is_(False)).scalar_subquery()
+    count = db.scalar(select(Article.view_count + pending).where(Article.id == article_id))
+    return envelope({"viewCount": count})
 
 
 @router.put("/articles/{article_id}/like")

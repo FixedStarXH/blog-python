@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, Table, Column
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, Table, Column, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.mysql import DATETIME, MEDIUMTEXT
 from app.db.base import Base
@@ -102,11 +102,12 @@ class Comment(Base):
 
 class MetricEvent(Base):
     __tablename__ = "article_metrics"
-    __table_args__ = (UniqueConstraint("article_id", "kind", "fingerprint"),)
+    __table_args__ = (UniqueConstraint("article_id", "kind", "fingerprint"), Index("ix_metric_pending_views", "kind", "counted", "id"))
     id: Mapped[int] = mapped_column(primary_key=True)
     article_id: Mapped[int] = mapped_column(ForeignKey("articles.id", ondelete="CASCADE"), index=True)
     kind: Mapped[str] = mapped_column(String(12), index=True)
     fingerprint: Mapped[str] = mapped_column(String(64))
+    counted: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 

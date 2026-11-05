@@ -21,7 +21,7 @@ from app.core.errors import DomainError, domain_error_handler, envelope, validat
 from app.db.session import engine, SessionLocal
 from app.models import AuditLog, User
 from app.middleware.limits import enforce_rate_limit
-from app.tasks.scheduler import publishing_loop, rag_maintenance_loop
+from app.tasks.scheduler import publishing_loop, rag_maintenance_loop, view_flush_loop
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger=logging.getLogger("blog")
@@ -34,12 +34,16 @@ async def lifespan(app: FastAPI):
     app.state.redis=redis.from_url(settings.redis_url,decode_responses=True,socket_connect_timeout=1,socket_timeout=1)
     scheduler=asyncio.create_task(publishing_loop())
     rag_worker=asyncio.create_task(rag_maintenance_loop())
+    view_worker=asyncio.create_task(view_flush_loop(app))
     yield
     scheduler.cancel()
     rag_worker.cancel()
+    view_worker.cancel()
     try: await scheduler
     except asyncio.CancelledError: pass
     try: await rag_worker
+    except asyncio.CancelledError: pass
+    try: await view_worker
     except asyncio.CancelledError: pass
     await app.state.redis.aclose()
     engine.dispose()

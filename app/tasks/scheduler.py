@@ -6,8 +6,32 @@ from app.db.session import SessionLocal
 from app.models import Article, ArticleChunk
 from app.rag.indexing import index_article
 from app.core.config import settings
+from app.services.view_counts import PENDING_KEY, flush_pending_views
 
 logger=logging.getLogger(__name__)
+
+
+async def view_flush_loop(app):
+    while True:
+        await asyncio.sleep(3)
+        redis = getattr(app.state, "redis", None)
+        event_ids = []
+        if redis:
+            try:
+                event_ids = [int(value) for value in await redis.spop(PENDING_KEY, 500)]
+            except Exception:
+                logger.debug("Redis view queue unavailable; using database sweep", exc_info=True)
+        try:
+            notified = await asyncio.to_thread(flush_pending_views, event_ids) if event_ids else 0
+            # Always sweep: Redis signals can be lost on a crash or outage.
+            recovered = await asyncio.to_thread(flush_pending_views)
+            if (notified or recovered) and redis:
+                try:
+                    await redis.incr("blog:http:version")
+                except Exception:
+                    logger.debug("Cache invalidation unavailable after view flush", exc_info=True)
+        except Exception:
+            logger.exception("View count flush failed; pending events will be retried")
 
 
 async def publishing_loop():

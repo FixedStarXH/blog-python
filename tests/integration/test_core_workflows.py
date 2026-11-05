@@ -256,6 +256,70 @@ class CoreWorkflowTests(unittest.TestCase):
             count = db.scalar(select(func.count()).select_from(MetricEvent).where(MetricEvent.article_id == article_id, MetricEvent.kind == "like"))
             self.assertEqual(count, 0)
 
+    def test_view_outbox_recovers_from_failure_without_double_counting(self):
+        from sqlalchemy import event, select
+        from app.db.session import SessionLocal, engine
+        from app.models import Article, MetricEvent
+        from app.services.view_counts import flush_pending_views
+        with patch("app.tasks.scheduler.flush_pending_views", return_value=0):
+            with SessionLocal() as db:
+                article = Article(title="Buffered views", content="body", author_id=1, category_id=1, status=1)
+                db.add(article)
+                db.commit()
+                article_id, updated = article.id, article.updated_at
+            path = f"/api/articles/{article_id}/view"
+            self.assertEqual(self.client.put(path).json()["data"]["viewCount"], 1)
+
+            self.assertEqual(self.client.put(path).json()["data"]["viewCount"], 1)
+            with SessionLocal() as db:
+                self.assertEqual(db.get(Article, article_id).view_count, 0)
+                record = db.scalar(select(MetricEvent).where(MetricEvent.article_id == article_id, MetricEvent.kind == "view"))
+                self.assertFalse(record.counted)
+                event_id = record.id
+
+            def fail_update(conn, cursor, statement, parameters, context, executemany):
+                if statement.lstrip().upper().startswith("UPDATE ARTICLES SET"):
+                    raise RuntimeError("simulated database failure")
+
+            event.listen(engine, "before_cursor_execute", fail_update)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "simulated database failure"):
+                    flush_pending_views([event_id])
+            finally:
+                event.remove(engine, "before_cursor_execute", fail_update)
+            with SessionLocal() as db:
+                self.assertEqual(db.get(Article, article_id).view_count, 0)
+                self.assertFalse(db.scalar(select(MetricEvent.counted).where(MetricEvent.article_id == article_id, MetricEvent.kind == "view")))
+            self.assertEqual(flush_pending_views([event_id]), 1)
+            self.assertEqual(flush_pending_views([event_id]), 0)
+            with SessionLocal() as db:
+                article = db.get(Article, article_id)
+                self.assertEqual(article.view_count, 1)
+                self.assertEqual(article.updated_at, updated)
+            self.assertEqual(self.client.put(path).json()["data"]["viewCount"], 1)
+
+    def test_view_outbox_competing_workers_apply_events_once(self):
+        from sqlalchemy import func, select
+        from app.db.session import SessionLocal
+        from app.models import Article, MetricEvent
+        from app.services.view_counts import flush_pending_views
+        with patch("app.tasks.scheduler.flush_pending_views", return_value=0):
+            with SessionLocal() as db:
+                article = Article(title="View workers", content="body", author_id=1, category_id=1, status=1)
+                db.add(article)
+                db.flush()
+                article_id = article.id
+                rows = [MetricEvent(article_id=article_id, kind="view", fingerprint=f"test-{i}", counted=False) for i in range(20)]
+                db.add_all(rows)
+                db.commit()
+                ids = [row.id for row in rows]
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                applied = list(pool.map(lambda _: flush_pending_views(ids), range(4)))
+            self.assertEqual(sum(applied), 20)
+            with SessionLocal() as db:
+                self.assertEqual(db.get(Article, article_id).view_count, 20)
+                self.assertEqual(db.scalar(select(func.count()).select_from(MetricEvent).where(MetricEvent.id.in_(ids), MetricEvent.counted.is_(False))), 0)
+
     def test_comment_nickname_and_moderation_contract(self):
         from app.db.session import SessionLocal
         from app.models import Article

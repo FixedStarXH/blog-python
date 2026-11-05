@@ -1,5 +1,6 @@
 """Optional live tests; run only against a disposable Compose environment."""
 import os
+import time
 import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -71,6 +72,22 @@ class ComposeIntegrationTests(unittest.TestCase):
             self.assertEqual(self.request_ok("GET", f"/api/articles/{article_id}").json()["data"]["likeCount"], 0)
         for _ in range(2):
             self.assertEqual(self.request_ok("PUT", f"/api/articles/{article_id}/view").json()["data"]["viewCount"], 1)
+
+        def view_once(_):
+            response = httpx.put(self.base_url + f"/api/articles/{article_id}/view", headers=headers, timeout=30)
+            response.raise_for_status()
+            return response.json()["data"]["viewCount"]
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            counts = list(pool.map(view_once, range(4)))
+        self.assertTrue(all(1 <= count <= 2 for count in counts))
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if self.request_ok("GET", f"/api/articles/{article_id}").json()["data"]["viewCount"] == 2:
+                break
+            time.sleep(0.25)
+        else:
+            self.fail("buffered views were not flushed to the article count")
 
         comment = self.request_ok("POST", f"/api/articles/{article_id}/comments", json={"content": "hello", "nickname": "Visitor"}).json()["data"]
         self.assertEqual(self.request_ok("GET", f"/api/articles/{article_id}/comments").json()["data"]["total"], 0)
