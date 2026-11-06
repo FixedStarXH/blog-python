@@ -32,6 +32,36 @@ class ComposeIntegrationTests(unittest.TestCase):
         response.raise_for_status()
         return response
 
+    def test_navigation_and_archive_contract(self):
+        suffix = uuid.uuid4().hex[:12]
+        category = self.request_ok("POST", "/api/admin/categories", headers=self.admin,
+                                   json={"name": "navigation_" + suffix}).json()["data"]["id"]
+        created = []
+        try:
+            for title in ("First", "Second"):
+                article = self.request_ok("POST", "/api/admin/articles", headers=self.admin, json={
+                    "title": title + suffix, "content": "body", "categoryId": category, "status": 1
+                }).json()["data"]
+                created.append(article["id"])
+                time.sleep(1.1)
+            self.request_ok("PUT", f"/api/articles/{created[0]}/like")
+            nav = self.request_ok("GET", f"/api/articles/{created[1]}/nav").json()["data"]
+            self.assertEqual(nav["prev"]["id"], created[0])
+            self.assertIsNone(nav["next"])
+            related = next(row for row in nav["related"] if row["id"] == created[0])
+            self.assertEqual(related["viewCount"], 0)
+            hot = self.request_ok("GET", "/api/articles/hot?limit=50").json()["data"]
+            first = next(i for i, row in enumerate(hot) if row["id"] == created[0])
+            second = next(i for i, row in enumerate(hot) if row["id"] == created[1])
+            self.assertLess(first, second)
+            archives = self.request_ok("GET", "/api/archive").json()["data"]
+            self.assertEqual(archives, self.request_ok("GET", "/api/archives").json()["data"])
+            self.assertTrue(set(created).issubset({row["id"] for group in archives for row in group["articles"]}))
+        finally:
+            for article_id in created:
+                self.request_ok("DELETE", f"/api/admin/articles/{article_id}", headers=self.admin)
+            self.request_ok("DELETE", f"/api/admin/categories/{category}", headers=self.admin)
+
     def test_public_article_contract(self):
         marker = uuid.uuid4().hex
         category = self.request_ok("GET", "/api/categories").json()["data"][0]["id"]

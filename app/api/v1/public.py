@@ -17,11 +17,16 @@ router = APIRouter()
 @router.get("/archives")
 @router.get("/archive")
 def archives(db: Session = Depends(get_db)):
-    rows=db.scalars(public_query(db).order_by(Article.created_at.desc())).all()
-    groups=defaultdict(list)
+    rows = db.execute(select(Article.id, Article.title, Article.created_at).where(
+        *visible_conditions(), Article.password == ""
+    ).order_by(Article.created_at.desc(), Article.id.desc())).all()
+    groups = defaultdict(list)
     for article in rows:
-        groups[str(article.created_at.year)].append({"id":article.id,"title":article.title,"createdAt":article.created_at.isoformat()})
-    return envelope([{"year":year,"count":len(items),"articles":items} for year,items in sorted(groups.items(),reverse=True)])
+        groups[str(article.created_at.year)].append({
+            "id": article.id, "title": article.title, "createdAt": article.created_at.isoformat()
+        })
+    return envelope([{"year": year, "count": len(items), "articles": items}
+                     for year, items in sorted(groups.items(), reverse=True)])
 
 
 @router.get("/settings")

@@ -143,6 +143,72 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(invalid.status_code, 400)
         self.assertIsNone(invalid.json()["data"])
 
+    def test_article_navigation_uses_category_time_and_public_visibility(self):
+        from app.db.session import SessionLocal
+        from app.models import Article, Category
+
+        with SessionLocal() as db:
+            category = Category(name="Navigation contract")
+            other_category = Category(name="Other navigation category")
+            db.add_all([category, other_category])
+            db.flush()
+            def make(title, day, **kwargs):
+                return Article(title=title, content="body", author_id=1, category_id=category.id,
+                               status=1, created_at=datetime(2024, 2, day), **kwargs)
+
+            # Deliberately insert articles in a different order from their dates.
+            current = make("Current", 10)
+            newer = make("Newer", 12, view_count=7)
+            older = make("Older", 8, view_count=13)
+            private = make("Private", 9, password="locked", view_count=1000)
+            draft = make("Draft", 11, view_count=999)
+            draft.status = 0
+            future = make("Future", 11, publish_at=datetime.utcnow() + timedelta(days=1))
+            deleted = make("Deleted", 11, deleted_at=datetime.utcnow())
+            other = Article(title="Other category", content="body", author_id=1,
+                            category_id=other_category.id, status=1, created_at=datetime(2024, 2, 9))
+            db.add_all([current, newer, older, private, draft, future, deleted, other])
+            db.commit()
+            current_id, newer_id, older_id = current.id, newer.id, older.id
+            hidden_ids = {private.id, draft.id, future.id, deleted.id, other.id}
+
+        nav = self.client.get(f"/api/articles/{current_id}/nav").json()["data"]
+        self.assertEqual(nav["prev"]["id"], older_id)
+        self.assertEqual(nav["next"]["id"], newer_id)
+        self.assertEqual([item["id"] for item in nav["related"]], [older_id, newer_id])
+        self.assertEqual([item["viewCount"] for item in nav["related"]], [13, 7])
+        self.assertTrue(hidden_ids.isdisjoint({item["id"] for item in nav["related"]}))
+        self.assertIsNone(self.client.get(f"/api/articles/{older_id}/nav").json()["data"]["prev"])
+        self.assertIsNone(self.client.get(f"/api/articles/{newer_id}/nav").json()["data"]["next"])
+        self.assertEqual(self.client.get(f"/api/articles/{future.id}/nav").status_code, 404)
+        self.assertEqual(self.client.get("/api/articles/999999/nav").status_code, 404)
+
+    def test_hot_and_archives_use_public_articles_and_expected_order(self):
+        from app.db.session import SessionLocal
+        from app.models import Article
+
+        with SessionLocal() as db:
+            popular = Article(title="Likes lead", content="body", author_id=1, category_id=1,
+                              status=1, created_at=datetime(2001, 6, 1), like_count=10000, view_count=1)
+            viewed = Article(title="Views lead", content="body", author_id=1, category_id=1,
+                            status=1, created_at=datetime(2002, 6, 1), like_count=9999, view_count=10000)
+            hidden = Article(title="Hidden hot", content="secret", author_id=1, category_id=1,
+                             status=1, created_at=datetime(2003, 6, 1), password="secret", like_count=20000)
+            db.add_all([popular, viewed, hidden])
+            db.commit()
+            popular_id, viewed_id, hidden_id = popular.id, viewed.id, hidden.id
+
+        hot = self.client.get("/api/articles/hot?limit=2").json()["data"]
+        self.assertEqual([item["id"] for item in hot], [popular_id, viewed_id])
+        self.assertTrue(all("content" not in item for item in hot))
+        groups = self.client.get("/api/archive").json()["data"]
+        self.assertEqual(groups, self.client.get("/api/archives").json()["data"])
+        selected = [group for group in groups if group["year"] in ("2001", "2002")]
+        self.assertEqual([group["year"] for group in selected], ["2002", "2001"])
+        self.assertEqual([group["articles"][0]["id"] for group in selected], [viewed_id, popular_id])
+        self.assertTrue(all(group["count"] == len(group["articles"]) for group in groups))
+        self.assertNotIn(hidden_id, {item["id"] for group in groups for item in group["articles"]})
+
     def test_future_article_is_hidden_across_public_endpoints(self):
         from app.db.session import SessionLocal
         from app.models import Article

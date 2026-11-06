@@ -3,13 +3,13 @@ import hashlib
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer, load_only
 from app.api.deps import current_user, get_db, optional_user, require_editor
 from app.core.errors import DomainError, envelope
 from app.core.html import article_markdown, sanitize_article_html
 from app.core.security import hash_password, verify_password
 from app.models import Article, Category, ColumnModel, MetricEvent, Tag, User
-from app.repositories.articles import page_public, visible_conditions
+from app.repositories.articles import page_public, public_query, visible_conditions
 from app.schemas.common import ArticleInput, ArticleUnlockInput
 from app.services.view_counts import notify_view
 
@@ -39,8 +39,10 @@ def public_articles(db: Session = Depends(get_db), keyword: str = "", q: str = "
 
 @router.get("/articles/hot")
 def hot_articles(db: Session = Depends(get_db), limit: int = Query(10, ge=1, le=50)):
-    rows, _ = page_public(db, 1, limit, sort="hot")
-    return envelope([article_data(a, False) for a in rows])
+    rows = db.scalars(public_query(db).options(defer(Article.content)).order_by(
+        Article.like_count.desc(), Article.id.desc()
+    ).limit(limit)).all()
+    return envelope([article_data(a, False, public_content=True) for a in rows])
 
 
 @router.get("/articles/{article_id}")
@@ -65,13 +67,27 @@ def unlock_article(article_id: int, body: ArticleUnlockInput, db: Session = Depe
 
 @router.get("/articles/{article_id}/nav")
 def article_nav(article_id: int, db: Session = Depends(get_db)):
-    current=db.scalar(select(Article).where(Article.id==article_id,*visible_conditions()))
-    if not current: raise DomainError("article not found",404)
-    previous=db.scalar(select(Article).where(*visible_conditions(),Article.password=="",Article.id<article_id).order_by(Article.id.desc()).limit(1))
-    following=db.scalar(select(Article).where(*visible_conditions(),Article.password=="",Article.id>article_id).order_by(Article.id).limit(1))
-    shape=lambda a:{"id":a.id,"title":a.title} if a else None
-    related=db.scalars(select(Article).where(*visible_conditions(),Article.password=="",Article.category_id==current.category_id,Article.id!=current.id).order_by(Article.view_count.desc()).limit(5)).all()
-    return envelope({"prev":shape(previous),"next":shape(following),"related":[{"id":a.id,"title":a.title,"summary":a.summary,"coverImage":a.cover_image} for a in related]})
+    current = db.scalar(select(Article).where(Article.id == article_id, *visible_conditions()))
+    if not current:
+        raise DomainError("article not found", 404)
+    candidates = (*visible_conditions(), Article.password == "", Article.category_id == current.category_id)
+    previous = db.scalar(select(Article).options(load_only(Article.id, Article.title)).where(
+        *candidates, Article.created_at < current.created_at
+    ).order_by(Article.created_at.desc(), Article.id.desc()).limit(1))
+    following = db.scalar(select(Article).options(load_only(Article.id, Article.title)).where(
+        *candidates, Article.created_at > current.created_at
+    ).order_by(Article.created_at, Article.id).limit(1))
+    related = db.scalars(select(Article).options(load_only(
+        Article.id, Article.title, Article.summary, Article.cover_image, Article.view_count
+    )).where(
+        *candidates, Article.id != current.id
+    ).order_by(Article.view_count.desc(), Article.id.desc()).limit(5)).all()
+    return envelope({
+        "prev": {"id": previous.id, "title": previous.title} if previous else None,
+        "next": {"id": following.id, "title": following.title} if following else None,
+        "related": [{"id": a.id, "title": a.title, "summary": a.summary,
+                     "coverImage": a.cover_image, "viewCount": a.view_count} for a in related],
+    })
 
 
 @router.put("/articles/{article_id}/view")
