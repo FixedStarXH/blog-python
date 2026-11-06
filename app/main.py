@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     settings.validate_production()
     import redis.asyncio as redis
     app.state.redis=redis.from_url(settings.redis_url,decode_responses=True,socket_connect_timeout=1,socket_timeout=1)
-    scheduler=asyncio.create_task(publishing_loop())
+    scheduler=asyncio.create_task(publishing_loop(app))
     rag_worker=asyncio.create_task(rag_maintenance_loop())
     view_worker=asyncio.create_task(view_flush_loop(app))
     yield

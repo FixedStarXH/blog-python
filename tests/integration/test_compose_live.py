@@ -4,6 +4,7 @@ import time
 import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 
 import httpx
@@ -31,6 +32,45 @@ class ComposeIntegrationTests(unittest.TestCase):
         response = self.client.request(method, path, **kwargs)
         response.raise_for_status()
         return response
+
+    def test_article_review_and_scheduled_publication(self):
+        suffix = uuid.uuid4().hex[:12]
+        category_id = self.request_ok("GET", "/api/categories").json()["data"][0]["id"]
+        created = []
+        try:
+            article = self.request_ok("POST", "/api/admin/articles", headers=self.admin, json={
+                "title": "Review " + suffix, "content": "body", "categoryId": category_id, "status": 2
+            }).json()["data"]
+            created.append(article["id"])
+            def review(action):
+                return httpx.put(self.base_url + f"/api/admin/articles/{article['id']}/{action}",
+                                 headers=self.admin, json={"reason": "Revise"} if action == "reject" else None,
+                                 timeout=30)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(review, ["approve", "reject"]))
+            self.assertEqual(sorted(response.status_code for response in results), [200, 409])
+
+            publish_at = (datetime.now(timezone.utc) + timedelta(seconds=3)).isoformat()
+            title = "Scheduled " + suffix
+            scheduled = self.request_ok("POST", "/api/admin/articles", headers=self.admin, json={
+                "title": title, "content": "scheduled body", "categoryId": category_id,
+                "status": 1, "publishAt": publish_at
+            }).json()["data"]
+            created.append(scheduled["id"])
+            self.assertEqual(scheduled["status"], 4)
+            params = {"keyword": title}
+            self.assertEqual(self.request_ok("GET", "/api/articles", params=params).json()["data"]["total"], 0)
+            deadline = time.monotonic() + 40
+            while time.monotonic() < deadline:
+                if self.request_ok("GET", "/api/articles", params=params).json()["data"]["total"] == 1:
+                    break
+                time.sleep(1)
+            else:
+                self.fail("scheduled publication did not invalidate the cached list")
+            self.assertEqual(self.request_ok("GET", f"/api/articles/{scheduled['id']}").json()["data"]["content"], "scheduled body")
+        finally:
+            for article_id in created:
+                self.request_ok("DELETE", f"/api/admin/articles/{article_id}", headers=self.admin)
 
     def test_account_and_submission_contract(self):
         suffix = uuid.uuid4().hex[:12]

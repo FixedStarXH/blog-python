@@ -191,7 +191,10 @@ def update_my_article(article_id: int, body: ArticleInput, user: User = Depends(
         setattr(a, attr, value)
     if body.clear_password: a.password = ""
     elif body.password: a.password = hash_password(body.password)
-    a.publish_at=_parse_datetime(body.publish_at)
+    if "publish_at" in body.model_fields_set:
+        a.publish_at = _parse_datetime(body.publish_at)
+        if a.status == 4 and not a.publish_at:
+            a.status = 2
     a.tags = db.scalars(select(Tag).where(Tag.id.in_(body.tag_ids), Tag.deleted_at.is_(None))).all() if body.tag_ids else []
     if len(a.tags)!=len(set(body.tag_ids)): raise DomainError("one or more tags were not found",400)
     if a.status in (0,3): a.status = 2

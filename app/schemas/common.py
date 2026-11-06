@@ -42,6 +42,23 @@ class AdminArticleInput(ArticleInput):
     status: int = Field(default=1, ge=0, le=4)
 
 
+class ArticleRejectInput(APIModel):
+    reason: str = Field(min_length=1, max_length=255)
+
+    @field_validator("reason")
+    @classmethod
+    def nonblank_reason(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("rejection reason cannot be blank")
+        return value.strip()
+
+
+class ArticleBatchInput(APIModel):
+    ids: list[Annotated[int, Field(gt=0)]] = Field(min_length=1)
+    action: Literal["publish", "approve", "draft", "setDraft", "top", "untop", "delete"] | None = None
+    operation: Literal["publish", "approve", "draft", "setDraft", "top", "untop", "delete"] | None = None
+
+
 class ArticleUnlockInput(APIModel):
     password: str = Field(min_length=1)
 

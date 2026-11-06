@@ -168,6 +168,131 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(client.get(f"/api/my/articles/{article_id}").status_code, 401)
         self.assertEqual(client.get("/api/my/articles?status=-1", headers=headers).json()["data"]["total"], 1)
 
+    def test_submission_review_scheduling_and_trash(self):
+        from app.db.session import SessionLocal
+        from app.models import Article, Category
+        client = self.client
+        author = client.post("/api/auth/register", json={
+            "username": "review_author", "email": "review_author@example.test", "password": "password123"
+        }).json()["data"]
+        headers = {"Authorization": "Bearer " + author["accessToken"]}
+        admin = client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
+        editor = {"Authorization": "Bearer " + admin["accessToken"]}
+        payload = {"title": "Review workflow", "content": "body", "categoryId": 1}
+        article_id = client.post("/api/my/articles", headers=headers, json=payload).json()["data"]["id"]
+        self.assertEqual(client.put(f"/api/admin/articles/{article_id}/approve", headers=headers).status_code, 403)
+        for reason in ("", "   "):
+            self.assertEqual(client.put(f"/api/admin/articles/{article_id}/reject", headers=editor, json={"reason": reason}).status_code, 422)
+        rejected = client.put(f"/api/admin/articles/{article_id}/reject", headers=editor, json={"reason": "Please revise"})
+        self.assertEqual((rejected.json()["data"]["status"], rejected.json()["data"]["rejectReason"]), (3, "Please revise"))
+        resubmitted = client.put(f"/api/my/articles/{article_id}", headers=headers, json=payload)
+        self.assertEqual(resubmitted.json()["data"]["status"], 2)
+        future = (datetime.utcnow() + timedelta(days=1)).isoformat()
+        scheduled = client.put(f"/api/my/articles/{article_id}", headers=headers, json={**payload, "publishAt": future})
+        self.assertEqual(scheduled.status_code, 200)
+        self.assertEqual(client.put(f"/api/admin/articles/{article_id}/approve", headers=editor).json()["data"]["status"], 4)
+        self.assertEqual(client.get(f"/api/articles/{article_id}").status_code, 404)
+        unchanged = client.put(f"/api/my/articles/{article_id}", headers=headers, json=payload).json()["data"]
+        self.assertEqual(unchanged["status"], 4)
+        self.assertIsNotNone(unchanged["publishAt"])
+        unscheduled = client.put(f"/api/my/articles/{article_id}", headers=headers, json={**payload, "publishAt": None}).json()["data"]
+        self.assertEqual((unscheduled["status"], unscheduled["publishAt"]), (2, None))
+        self.assertEqual(client.put(f"/api/admin/articles/{article_id}/approve", headers=editor).json()["data"]["status"], 1)
+        self.assertEqual(client.delete(f"/api/my/articles/{article_id}", headers=headers).status_code, 200)
+        self.assertEqual(client.get(f"/api/articles/{article_id}").status_code, 404)
+        self.assertIn(article_id, [row["id"] for row in client.get("/api/admin/articles/trash", headers=editor).json()["data"]["list"]])
+        self.assertEqual(client.put(f"/api/admin/articles/{article_id}/restore", headers=editor).status_code, 200)
+        self.assertEqual(client.get(f"/api/articles/{article_id}").status_code, 200)
+        with SessionLocal() as db:
+            category = Category(name="Deleted admin category", deleted_at=datetime.utcnow())
+            db.add(category)
+            db.commit()
+            category_id = category.id
+        self.assertEqual(client.post("/api/admin/articles", headers=editor, json={**payload, "categoryId": category_id}).status_code, 400)
+        invalid_update = {**payload, "title": "Should not be saved", "categoryId": category_id}
+        self.assertEqual(client.put(f"/api/admin/articles/{article_id}", headers=editor, json=invalid_update).status_code, 400)
+        self.assertEqual(client.get(f"/api/admin/articles/{article_id}", headers=editor).json()["data"]["title"], payload["title"])
+        self.assertEqual(client.post("/api/admin/articles", headers=editor, json={**payload, "status": 4}).status_code, 400)
+        for invalid in ({"ids": [], "action": "publish"}, {"ids": [article_id], "action": "unknown"}, {"ids": ["bad"], "action": "draft"}):
+            self.assertEqual(client.post("/api/admin/articles/batch", headers=editor, json=invalid).status_code, 422)
+        self.assertEqual(client.get(f"/api/articles/{article_id}").status_code, 200)
+        batch_path = "/api/admin/articles/batch"
+        for action, field, expected in (
+            ("top", "isTop", True), ("untop", "isTop", False),
+            ("draft", "status", 0), ("publish", "status", 1),
+        ):
+            result = client.post(batch_path, headers=editor, json={"ids": [str(article_id)], "action": action})
+            self.assertEqual(result.json()["data"]["affected"], 1)
+            detail = client.get(f"/api/admin/articles/{article_id}", headers=editor).json()["data"]
+            self.assertEqual(detail[field], expected)
+        result = client.post(batch_path, headers=editor, json={"ids": [article_id], "action": "delete"})
+        self.assertEqual(result.json()["data"]["affected"], 1)
+        self.assertEqual(client.get(f"/api/articles/{article_id}").status_code, 404)
+
+    def test_concurrent_review_and_scheduled_publication(self):
+        from sqlalchemy import select
+        from app.db.session import SessionLocal
+        from app.models import Article
+        from app.tasks.scheduler import publish_due_articles, publishing_loop
+        admin = self.client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
+        editor = {"Authorization": "Bearer " + admin["accessToken"]}
+        created = self.client.post("/api/admin/articles", headers=editor, json={
+            "title": "Concurrent review", "content": "body", "categoryId": 1, "status": 2
+        }).json()["data"]
+        article_id = created["id"]
+        def review(action):
+            return self.client.put(f"/api/admin/articles/{article_id}/{action}", headers=editor,
+                                   json={"reason": "Revise"} if action == "reject" else None)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(review, ["approve", "reject"]))
+        self.assertEqual(sorted(response.status_code for response in responses), [200, 409])
+        with SessionLocal() as db:
+            now = datetime.utcnow()
+            due = Article(title="Due", content="body", author_id=1, category_id=1, status=4, publish_at=now-timedelta(seconds=1))
+            future = Article(title="Later", content="body", author_id=1, category_id=1, status=4, publish_at=now+timedelta(days=1))
+            deleted = Article(title="Deleted scheduled", content="body", author_id=1, category_id=1, status=4, publish_at=now-timedelta(seconds=1), deleted_at=now)
+            db.add_all([due, future, deleted])
+            db.commit()
+            due_id, future_id, deleted_id = due.id, future.id, deleted.id
+            self.assertEqual(publish_due_articles(db, now), [due_id])
+            self.assertEqual(publish_due_articles(db, now), [])
+            self.assertEqual(db.scalar(select(Article.status).where(Article.id == future_id)), 4)
+            self.assertEqual(db.scalar(select(Article.status).where(Article.id == deleted_id)), 4)
+        with SessionLocal() as db:
+            db.get(Article, due_id).status = 4
+            db.commit()
+        async def run_once():
+            with patch("app.tasks.scheduler.asyncio.sleep", new=AsyncMock(side_effect=[None, asyncio.CancelledError])), \
+                 patch("app.tasks.scheduler.settings.embedding_base_url", ""):
+                self.app.state.redis = AsyncMock()
+                try:
+                    with self.assertRaises(asyncio.CancelledError):
+                        await publishing_loop(self.app)
+                    self.app.state.redis.incr.assert_awaited_once_with("blog:http:version")
+                finally:
+                    self.app.state.redis = None
+        asyncio.run(run_once())
+
+    def test_concurrent_schedulers_publish_each_article_once(self):
+        from app.db.session import SessionLocal
+        from app.models import Article
+        from app.tasks.scheduler import publish_due_articles
+        now = datetime.utcnow()
+        with SessionLocal() as db:
+            articles = [Article(title=f"Scheduled race {i}", content="body", author_id=1,
+                                category_id=1, status=4, publish_at=now-timedelta(seconds=1))
+                        for i in range(10)]
+            db.add_all(articles)
+            db.commit()
+            expected = {article.id for article in articles}
+        def publish(_):
+            with SessionLocal() as db:
+                return publish_due_articles(db, now)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(publish, range(2)))
+        self.assertEqual(set(results[0]) | set(results[1]), expected)
+        self.assertTrue(set(results[0]).isdisjoint(results[1]))
+
     def test_public_list_search_and_featured_paging(self):
         from app.db.session import SessionLocal
         from app.models import Article
