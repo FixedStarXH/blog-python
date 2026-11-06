@@ -59,6 +59,7 @@
 
     let allTags = [];
     let selectedTags = [];
+    let filterVersion = 0;
     const tagColors = [
       { bg: '#FFE0E0', border: '#E53012', text: '#E53012' },    // 红
       { bg: '#DDE8FF', border: '#2563EB', text: '#2563EB' },    // 蓝
@@ -167,6 +168,8 @@
     }
 
     async function filterByTags() {
+      var version = ++filterVersion;
+      var tagsToLoad = selectedTags.slice();
       var results = document.getElementById('tag-results');
       var list = document.getElementById('tag-result-list');
       var totalEl = document.getElementById('tag-result-total');
@@ -182,10 +185,13 @@
       try {
         var allArticles = [];
         var seen = new Set();
-        for (var i = 0; i < selectedTags.length; i++) {
-          var tag = selectedTags[i];
-          var data = await api.get('/api/articles?tag=' + encodeURIComponent(tag) + '&pageSize=50&sort=latest');
-          if (data && data.list) {
+        for (var i = 0; i < tagsToLoad.length; i++) {
+          var tag = tagsToLoad[i];
+          var page = 1;
+          var data;
+          do {
+            data = await api.get('/api/articles?tag=' + encodeURIComponent(tag) + '&pageSize=50&sort=latest&page=' + page);
+            if (version !== filterVersion) return;
             for (var j = 0; j < data.list.length; j++) {
               var a = data.list[j];
               if (!seen.has(a.id)) {
@@ -193,7 +199,8 @@
                 allArticles.push(a);
               }
             }
-          }
+            page++;
+          } while (data.list.length === 50 && (page - 1) * 50 < data.total);
         }
 
         totalEl.textContent = allArticles.length;
@@ -215,6 +222,7 @@
             '</a>';
         }).join('');
       } catch (e) {
+        if (version !== filterVersion) return;
         console.error('[tags] 筛选失败:', e);
         list.innerHTML = '<div class="empty">加载失败: ' + esc(e.message || String(e)) + '</div>';
       }

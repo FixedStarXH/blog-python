@@ -13,6 +13,7 @@ from app.models import Article, AuditLog, Category, Comment, Image, Link, Metric
 from app.api.v1.articles import article_data
 from app.api.v1.articles import _parse_datetime
 from app.schemas.common import AdminArticleInput, ArticleBatchInput, ArticleRejectInput
+from app.services.taxonomy import lock_category, lock_column, lock_tags
 
 router = APIRouter(prefix="/admin")
 
@@ -44,22 +45,28 @@ def article_detail(article_id: int, db: Session = Depends(get_db), user: User = 
 def create_article(body: AdminArticleInput, db: Session = Depends(get_db), user: User = Depends(require_editor)):
     body=body.model_dump(by_alias=True)
     category_id = int(body.get("categoryId", body.get("category_id", 0)))
-    if not db.scalar(select(Category.id).where(Category.id == category_id, Category.deleted_at.is_(None))):
-        raise DomainError("category not found", 400)
+    lock_category(db, category_id)
+    lock_column(db, body["columnId"], user.id)
+    tags = lock_tags(db, body["tagIds"])
     raw_password=body.get("password","")
     a = Article(author_id=user.id, title=str(body.get("title", "")).strip(), content=str(body.get("content", "")), summary=str(body.get("summary", "")), category_id=category_id, status=int(body.get("status", 1)), cover_image=body.get("coverImage", ""), source_url=body.get("sourceUrl", ""), password=hash_password(raw_password) if raw_password else "", is_top=bool(body.get("isTop", False)), is_featured=bool(body.get("isFeatured", False)),publish_at=_parse_datetime(body.get("publishAt")))
+    a.column_id = body["columnId"]
     if not a.title or not a.content: raise DomainError("title and content are required")
-    tag_ids=body.get("tagIds",[]); a.tags=db.scalars(select(Tag).where(Tag.id.in_(tag_ids),Tag.deleted_at.is_(None))).all() if tag_ids else []
-    if len(a.tags)!=len(set(tag_ids)): raise DomainError("one or more tags were not found",400)
+    a.tags = tags
     if a.status==1 and a.publish_at and a.publish_at>datetime.utcnow(): a.status=4
     if a.status == 4 and not a.publish_at: raise DomainError("scheduled articles need a publication time", 400)
     db.add(a); db.commit(); db.refresh(a); return envelope(article_data(a))
 
 @router.put("/articles/{article_id}")
 def update_article(article_id: int, body: AdminArticleInput, db: Session = Depends(get_db), user: User = Depends(require_editor)):
+    column_supplied = "column_id" in body.model_fields_set
     body=body.model_dump(by_alias=True)
     a = db.get(Article, article_id)
     if not a or a.deleted_at: raise DomainError("article not found", 404)
+    lock_category(db, body["categoryId"])
+    if column_supplied:
+        lock_column(db, body["columnId"], a.author_id)
+    tags = lock_tags(db, body["tagIds"])
     if body["clearPassword"] and body["password"]: raise DomainError("choose a new password or clear the existing password")
     fields = {"title":"title", "content":"content", "summary":"summary", "coverImage":"cover_image", "sourceUrl":"source_url", "categoryId":"category_id", "status":"status", "isTop":"is_top", "isFeatured":"is_featured", "publishAt":"publish_at"}
     for key, attr in fields.items():
@@ -69,11 +76,9 @@ def update_article(article_id: int, body: AdminArticleInput, db: Session = Depen
             setattr(a, attr, value)
     if body["clearPassword"]: a.password = ""
     elif body["password"]: a.password = hash_password(body["password"])
-    if not db.scalar(select(Category.id).where(Category.id == a.category_id, Category.deleted_at.is_(None))):
-        raise DomainError("category not found", 400)
-    if "tagIds" in body:
-        a.tags=db.scalars(select(Tag).where(Tag.id.in_(body["tagIds"]),Tag.deleted_at.is_(None))).all()
-        if len(a.tags)!=len(set(body["tagIds"])): raise DomainError("one or more tags were not found",400)
+    if column_supplied:
+        a.column_id = body["columnId"]
+    a.tags = tags
     if a.status==1 and a.publish_at and a.publish_at>datetime.utcnow(): a.status=4
     if a.status == 4 and not a.publish_at: raise DomainError("scheduled articles need a publication time", 400)
     a.updated_at = datetime.utcnow(); db.commit(); return envelope(article_data(a))

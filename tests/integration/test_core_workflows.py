@@ -735,9 +735,108 @@ class CoreWorkflowTests(unittest.TestCase):
         all_comments = client.get("/api/admin/comments?status=-1", headers=editor).json()["data"]["list"]
         self.assertIn(comment["id"], [row["id"] for row in all_comments])
 
+    def test_taxonomy_columns_and_recoverable_article_references(self):
+        from sqlalchemy import func, select
+        from app.db.session import SessionLocal
+        from app.models import Article, article_tags
+        client = self.client
+        admin = client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
+        editor = {"Authorization": "Bearer " + admin["accessToken"]}
+        author = client.post("/api/auth/register", json={
+            "username": "column_owner", "email": "column_owner@example.test", "password": "password123"
+        }).json()["data"]
+        other = client.post("/api/auth/register", json={
+            "username": "column_other", "email": "column_other@example.test", "password": "password123"
+        }).json()["data"]
+        owner = {"Authorization": "Bearer " + author["accessToken"]}
+        outsider = {"Authorization": "Bearer " + other["accessToken"]}
+        self.assertEqual(client.post("/api/admin/categories", headers=owner, json={"name": "Forbidden"}).status_code, 403)
+        for path, body in (("/api/admin/categories", {"name": "  "}), ("/api/admin/tags", {"name": "x" * 51}),
+                           ("/api/my/columns", {"name": ""})):
+            self.assertEqual(client.post(path, headers=owner if "columns" in path else editor, json=body).status_code, 422)
+        category = client.post("/api/admin/categories", headers=editor, json={"name": " Test taxonomy ", "sort": -2}).json()["data"]
+        category_id = category["id"]
+        self.assertEqual(category["name"], "Test taxonomy")
+        self.assertEqual(client.post("/api/admin/categories", headers=editor, json={"name": "Test taxonomy"}).status_code, 409)
+        self.assertEqual(client.put(f"/api/admin/categories/{category_id}", headers=editor, json={"sort": 0}).status_code, 200)
+        tag = client.post("/api/admin/tags", headers=editor, json={"name": "Test taxonomy tag"}).json()["data"]
+        tag_id = tag["id"]
+        self.assertEqual(client.post("/api/admin/tags", headers=editor, json={"name": "Test taxonomy tag"}).status_code, 409)
+        self.assertEqual(client.get("/api/admin/tags?pageSize=0", headers=editor).status_code, 422)
+        column = client.post("/api/my/columns", headers=owner, json={"name": "My column"}).json()["data"]
+        column_id = column["id"]
+        self.assertEqual(client.put(f"/api/my/columns/{column_id}", headers=outsider, json={"name": "Stolen"}).status_code, 404)
+        self.assertEqual(client.delete(f"/api/my/columns/{column_id}", headers=outsider).status_code, 404)
+        self.assertEqual(client.put(f"/api/my/columns/{column_id}", headers=owner, json={"status": 0}).status_code, 200)
+        self.assertNotIn(column_id, [row["id"] for row in client.get("/api/columns").json()["data"]])
+        self.assertEqual(client.put(f"/api/my/columns/{column_id}", headers=owner, json={"status": 1}).status_code, 200)
+        payload = {"title": "Column post", "content": "body", "categoryId": category_id, "columnId": column_id, "tagIds": [tag_id]}
+        self.assertEqual(client.post("/api/my/articles", headers=outsider, json=payload).status_code, 400)
+        article = client.post("/api/my/articles", headers=owner, json=payload)
+        self.assertEqual(article.status_code, 201, article.text)
+        article_id = article.json()["data"]["id"]
+        admin_category = next(row for row in client.get("/api/admin/categories", headers=editor).json()["data"] if row["id"] == category_id)
+        self.assertEqual(admin_category["articleCount"], 1)
+        self.assertEqual(client.put(f"/api/admin/articles/{article_id}/approve", headers=editor).status_code, 200)
+        tag_public = next(row for row in client.get("/api/tags").json()["data"] if row["id"] == tag_id)
+        self.assertEqual(tag_public["articleCount"], 1)
+        self.assertEqual(client.get(f"/api/articles?tag={tag['name']}").json()["data"]["total"], 1)
+        changed = client.put(f"/api/my/articles/{article_id}", headers=owner, json={
+            "title": "Edited", "content": "body", "categoryId": category_id, "tagIds": [tag_id]
+        })
+        self.assertEqual(changed.json()["data"]["columnId"], column_id)
+        admin_changed = client.put(f"/api/admin/articles/{article_id}", headers=editor, json={
+            "title": "Admin edit", "content": "body", "categoryId": category_id, "tagIds": [tag_id]
+        })
+        self.assertEqual(admin_changed.json()["data"]["columnId"], column_id)
+        self.assertEqual(client.delete(f"/api/admin/categories/{category_id}", headers=editor).status_code, 409)
+        self.assertEqual(client.delete(f"/api/my/columns/{column_id}", headers=owner).status_code, 409)
+        self.assertEqual(client.delete(f"/api/my/articles/{article_id}", headers=owner).status_code, 200)
+        self.assertEqual(client.delete(f"/api/admin/categories/{category_id}", headers=editor).status_code, 409)
+        self.assertEqual(client.delete(f"/api/my/columns/{column_id}", headers=owner).status_code, 409)
+        self.assertEqual(client.delete(f"/api/admin/tags/{tag_id}", headers=editor).status_code, 200)
+        with SessionLocal() as db:
+            self.assertEqual(db.scalar(select(func.count()).select_from(article_tags).where(article_tags.c.tag_id == tag_id)), 0)
+            self.assertEqual(db.get(Article, article_id).column_id, column_id)
+        self.assertEqual(client.put(f"/api/admin/articles/{article_id}/restore", headers=editor).status_code, 200)
+        self.assertEqual(client.get(f"/api/my/articles/{article_id}", headers=owner).json()["data"]["tags"], [])
+
+    def test_concurrent_category_delete_and_submission_keep_references_valid(self):
+        from sqlalchemy import select
+        from app.db.session import SessionLocal
+        from app.models import Article, Category
+        admin = self.client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
+        editor = {"Authorization": "Bearer " + admin["accessToken"]}
+        author = self.client.post("/api/auth/register", json={
+            "username": "taxonomy_race", "email": "taxonomy_race@example.test", "password": "password123"
+        }).json()["data"]
+        owner = {"Authorization": "Bearer " + author["accessToken"]}
+        category = self.client.post("/api/admin/categories", headers=editor, json={"name": "Race category"}).json()["data"]["id"]
+        barrier = threading.Barrier(2, timeout=10)
+        def submit():
+            barrier.wait()
+            return self.client.post("/api/my/articles", headers=owner, json={
+                "title": "Race article", "content": "body", "categoryId": category
+            }).status_code
+        def remove():
+            barrier.wait()
+            return self.client.delete(f"/api/admin/categories/{category}", headers=editor).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            submitted = pool.submit(submit)
+            removed = pool.submit(remove)
+            result = (submitted.result(), removed.result())
+        self.assertIn(result, ((201, 409), (400, 200)))
+        with SessionLocal() as db:
+            item = db.get(Category, category)
+            article = db.scalar(select(Article).where(Article.category_id == category))
+            self.assertFalse(article is not None and item.deleted_at is not None)
+
     def test_public_statistics_exclude_unlisted_articles(self):
         from app.db.session import SessionLocal
         from app.models import Article, Category
+        from app.services.view_counts import flush_pending_views
+        self.enterContext(patch("app.tasks.scheduler.flush_pending_views", return_value=0))
+        flush_pending_views()
         with SessionLocal() as db:
             category = Category(name="Public statistics")
             db.add(category)

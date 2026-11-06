@@ -20,7 +20,11 @@ router = APIRouter(prefix="/admin")
 @router.get("/categories")
 def admin_categories(db: Session = Depends(get_db), user: User = Depends(require_editor)):
     rows=db.scalars(select(Category).where(Category.deleted_at.is_(None)).order_by(Category.sort,Category.id)).all()
-    return envelope([{"id":x.id,"name":x.name,"description":x.description,"sort":x.sort} for x in rows])
+    counts = dict(db.execute(select(Article.category_id, func.count(Article.id)).where(
+        Article.deleted_at.is_(None)
+    ).group_by(Article.category_id)).all())
+    return envelope([{"id":x.id,"name":x.name,"description":x.description,"sort":x.sort,
+                      "articleCount":counts.get(x.id, 0)} for x in rows])
 
 @router.get("/settings")
 def settings_list(db: Session = Depends(get_db), user: User = Depends(require_editor)):

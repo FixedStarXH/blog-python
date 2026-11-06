@@ -1,6 +1,7 @@
 """Optional live tests; run only against a disposable Compose environment."""
 import os
 import time
+import threading
 import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -32,6 +33,36 @@ class ComposeIntegrationTests(unittest.TestCase):
         response = self.client.request(method, path, **kwargs)
         response.raise_for_status()
         return response
+
+    def test_category_delete_and_article_creation_race(self):
+        suffix = uuid.uuid4().hex[:12]
+        category = self.request_ok("POST", "/api/admin/categories", headers=self.admin, json={
+            "name": "race_category_" + suffix
+        }).json()["data"]["id"]
+        author = self.request_ok("POST", "/api/auth/register", json={
+            "username": "cat_" + suffix, "email": suffix + "@validation.test", "password": "password123"
+        }).json()["data"]
+        headers = {"Authorization": "Bearer " + author["accessToken"]}
+        barrier = threading.Barrier(2, timeout=10)
+        def submit():
+            barrier.wait()
+            return httpx.post(self.base_url + "/api/my/articles", headers=headers, json={
+                "title": "Race", "content": "body", "categoryId": category
+            }, timeout=30)
+        def remove():
+            barrier.wait()
+            return httpx.delete(self.base_url + f"/api/admin/categories/{category}", headers=self.admin, timeout=30)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            submission = pool.submit(submit)
+            deletion = pool.submit(remove)
+            created, removed = submission.result(), deletion.result()
+        self.assertIn((created.status_code, removed.status_code), ((201, 409), (400, 200)))
+        if created.status_code == 201:
+            article_id = created.json()["data"]["id"]
+            categories = self.request_ok("GET", "/api/admin/categories", headers=self.admin).json()["data"]
+            self.assertEqual(next(row["articleCount"] for row in categories if row["id"] == category), 1)
+            self.request_ok("DELETE", f"/api/my/articles/{article_id}", headers=headers)
+            self.assertEqual(self.client.delete(f"/api/admin/categories/{category}", headers=self.admin).status_code, 409)
 
     def test_article_review_and_scheduled_publication(self):
         suffix = uuid.uuid4().hex[:12]
@@ -136,7 +167,7 @@ class ComposeIntegrationTests(unittest.TestCase):
         finally:
             for article_id in created:
                 self.request_ok("DELETE", f"/api/admin/articles/{article_id}", headers=self.admin)
-            self.request_ok("DELETE", f"/api/admin/categories/{category}", headers=self.admin)
+            self.assertEqual(self.client.delete(f"/api/admin/categories/{category}", headers=self.admin).status_code, 409)
 
     def test_public_article_contract(self):
         marker = uuid.uuid4().hex
@@ -181,6 +212,8 @@ class ComposeIntegrationTests(unittest.TestCase):
         content = "中" * 100000
         article = self.request_ok("POST", "/api/my/articles", headers=headers, json={"title": "Compose smoke " + suffix, "content": content, "categoryId": categories[0]["id"]}).json()["data"]
         article_id = article["id"]
+        admin_categories = self.request_ok("GET", "/api/admin/categories", headers=self.admin).json()["data"]
+        self.assertGreaterEqual(next(row["articleCount"] for row in admin_categories if row["id"] == categories[0]["id"]), 1)
         self.assertEqual(self.client.get(f"/api/articles/{article_id}").status_code, 404)
         self.request_ok("PUT", f"/api/admin/articles/{article_id}/approve", headers=self.admin)
         self.assertEqual(self.request_ok("GET", f"/api/articles/{article_id}").json()["data"]["content"], content)

@@ -114,6 +114,24 @@
       background: var(--white);
     }
 
+    .my-columns { margin-top: 24px; }
+    .column-form { display: grid; gap: 12px; padding: 20px; border-bottom: 1px solid var(--line); }
+    .column-form label { display: grid; gap: 6px; font-size: 13px; font-weight: 700; }
+    .column-form input, .column-form select {
+      width: 100%; padding: 10px; border: 1px solid var(--line); background: var(--paper);
+      color: var(--ink); font: inherit;
+    }
+    .column-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .column-actions button, .column-row button {
+      border: 1px solid var(--ink); background: var(--white); color: var(--ink);
+      padding: 8px 12px; font: inherit; cursor: pointer;
+    }
+    .column-actions button[type=submit] { background: var(--ink); color: var(--paper); }
+    .column-row { display: flex; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+    .column-row p { margin: 6px 0; color: var(--gray-6); overflow-wrap: anywhere; }
+    .column-row .column-actions { align-items: center; flex-shrink: 0; }
+    @media (max-width: 600px) { .column-row { flex-direction: column; } }
+
     .me-articles .head {
       display: flex;
       align-items: center;
@@ -254,6 +272,7 @@
       </div>
       <nav class="me-nav">
         <a class="tab active" href="javascript:;">我的文章</a>
+        <a class="tab" href="#my-columns">我的专栏</a>
         <a class="tab" href="write.html">投稿新文章</a>
         <a class="tab" href="index.html">返回首页</a>
       </nav>
@@ -270,6 +289,17 @@
           <tbody id="my-tbody"></tbody>
         </table>
       </div>
+      <section class="me-articles my-columns" id="my-columns">
+        <div class="head"><h3>我的专栏</h3></div>
+        <form class="column-form" id="column-form">
+          <input type="hidden" id="column-id">
+          <label>专栏名称<input id="column-name" maxlength="100" required></label>
+          <label>简介<input id="column-description" maxlength="255"></label>
+          <label>状态<select id="column-status"><option value="1">公开</option><option value="0">关闭</option></select></label>
+          <div class="column-actions"><button type="submit" id="column-save">创建专栏</button><button type="button" id="column-cancel" hidden>取消编辑</button></div>
+        </form>
+        <div id="column-list" aria-live="polite">加载中…</div>
+      </section>
     </div>`;
 
       const tbody = document.getElementById('my-tbody');
@@ -292,6 +322,75 @@
         </td>
       </tr>`).join('');
       }
+      setupColumns();
+    }
+
+    let myColumns = [];
+    async function setupColumns() {
+      const form = document.getElementById('column-form');
+      const list = document.getElementById('column-list');
+      const resetForm = () => {
+        form.reset();
+        document.getElementById('column-id').value = '';
+        document.getElementById('column-save').textContent = '创建专栏';
+        document.getElementById('column-cancel').hidden = true;
+      };
+      async function refreshColumns() {
+        try {
+          myColumns = await api.get('/api/my/columns');
+          list.innerHTML = myColumns.map(c => `
+            <div class="column-row"><div><strong>${esc(c.name)}</strong>
+              <p>${esc(c.description || '')}</p><small>${c.status === 1 ? '公开' : '已关闭'}</small></div>
+              <div class="column-actions"><button type="button" data-edit-column="${c.id}">编辑</button>
+                <button type="button" data-delete-column="${c.id}">删除</button></div></div>`).join('') ||
+            '<div class="column-row">还没有专栏</div>';
+        } catch (e) { list.textContent = '专栏加载失败，请刷新后重试'; }
+      }
+      document.getElementById('column-cancel').onclick = resetForm;
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        const id = document.getElementById('column-id').value;
+        const data = {
+          name: document.getElementById('column-name').value.trim(),
+          description: document.getElementById('column-description').value.trim(),
+          status: Number(document.getElementById('column-status').value),
+        };
+        if (!data.name) return toast('请输入专栏名称', true);
+        const save = document.getElementById('column-save');
+        save.disabled = true;
+        try {
+          if (id) await api.put('/api/my/columns/' + id, data);
+          else await api.post('/api/my/columns', data);
+          resetForm();
+          await refreshColumns();
+          toast('专栏已保存');
+        } catch (e) { toast(e.message, true); }
+        finally { save.disabled = false; }
+      };
+      list.onclick = async (event) => {
+        const edit = event.target.closest('[data-edit-column]');
+        const remove = event.target.closest('[data-delete-column]');
+        if (edit) {
+          const column = myColumns.find(c => c.id === Number(edit.dataset.editColumn));
+          if (!column) return;
+          document.getElementById('column-id').value = column.id;
+          document.getElementById('column-name').value = column.name;
+          document.getElementById('column-description').value = column.description || '';
+          document.getElementById('column-status').value = column.status;
+          document.getElementById('column-save').textContent = '保存修改';
+          document.getElementById('column-cancel').hidden = false;
+          document.getElementById('column-name').focus();
+        }
+        if (remove && confirm('确定删除这个专栏？')) {
+          try {
+            await api.del('/api/my/columns/' + remove.dataset.deleteColumn);
+            resetForm();
+            await refreshColumns();
+            toast('专栏已删除');
+          } catch (e) { toast(e.message, true); }
+        }
+      };
+      await refreshColumns();
     }
 
     async function delMyArt(id) {

@@ -297,6 +297,10 @@
             <div class="write-hint">点击标签切换选中，选中标签会以红色高亮</div>
           </div>
           <div class="field">
+            <label for="f-column">专栏</label>
+            <select id="f-column" disabled><option value="">无专栏</option></select>
+          </div>
+          <div class="field">
             <label>摘要
               <button type="button" class="write-ai-btn" id="btn-ai-summary" onclick="aiSummary(event)"
                 title="AI 根据正文自动生成摘要(50-100字)">AI 摘要</button>
@@ -422,6 +426,7 @@
     (async function init() {
       await loadCats();
       await loadTags();
+      await loadColumns();
       if (editId) await loadArticle(editId);
     })();
 
@@ -441,6 +446,16 @@
         allTags = await api.get('/api/tags');
         renderTagChips();
       } catch (e) { toast('标签加载失败', true); }
+    }
+
+    async function loadColumns() {
+      try {
+        const columns = await api.get('/api/my/columns');
+        const select = document.getElementById('f-column');
+        select.innerHTML = '<option value="">无专栏</option>' +
+          columns.map(c => `<option value="${c.id}">${esc(c.name)}${c.status === 0 ? '（已关闭）' : ''}</option>`).join('');
+        select.disabled = false;
+      } catch (e) { toast('专栏加载失败，原有专栏会保留', true); }
     }
 
     function renderTagChips() {
@@ -469,6 +484,7 @@
         // 旧文章若是 HTML 源码，自动切 HTML 模式，避免保存时 marked 二次转义
         if (looksLikeHtml(a.content || '')) toggleEditorMode();
         document.getElementById('f-category').value = a.categoryId || '';
+        document.getElementById('f-column').value = a.columnId || '';
         (a.tags || []).forEach(t => selectedTags.add(t.id));
         renderTagChips();
         // 被驳回的文章：提示原因，鼓励修改重提
@@ -492,8 +508,9 @@
         categoryId,
         tagIds: Array.from(selectedTags),
         password: '',
-        publishAt: null,
       };
+      const columnSelect = document.getElementById('f-column');
+      if (!columnSelect.disabled) payload.columnId = columnSelect.value ? Number(columnSelect.value) : null;
       if (!categoryId) { toast('请选择分类', true); return; }
       const btn = document.getElementById('submit-btn');
       btn.disabled = true;

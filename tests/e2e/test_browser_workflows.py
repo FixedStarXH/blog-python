@@ -9,6 +9,34 @@ import uuid
     "disposable browser test environment not configured",
 )
 class BrowserWorkflowTests(unittest.TestCase):
+    def test_tag_filter_loads_all_pages(self):
+        from urllib.parse import parse_qs, urlsplit
+        from playwright.sync_api import sync_playwright, expect
+
+        with sync_playwright() as p:
+            executable = os.environ.get("BLOG_BROWSER_EXECUTABLE")
+            browser = p.chromium.launch(headless=True, **({"executable_path": executable} if executable else {}))
+            page = browser.new_page()
+            page.route("**/api/tags", lambda route: route.fulfill(json={
+                "code": 200, "message": "success", "data": [{"id": 987, "name": "Test tag", "articleCount": 51}]
+            }))
+            def articles(route):
+                query = parse_qs(urlsplit(route.request.url).query)
+                if query.get("tag") != ["Test tag"]:
+                    return route.continue_()
+                number = int(query.get("page", ["1"])[0])
+                ids = range(1, 51) if number == 1 else [51]
+                items = [{"id": i, "title": f"Tag article {i}", "createdAt": "2024-01-01T00:00:00",
+                          "category": {"name": "Category"}, "viewCount": 0} for i in ids]
+                route.fulfill(json={"code": 200, "message": "success",
+                                    "data": {"list": items, "total": 51, "page": number, "pageSize": 50}})
+            page.route("**/api/articles?*", articles)
+            page.goto(os.environ["BLOG_BROWSER_BASE_URL"].rstrip("/") + "/tags.html")
+            page.locator('.tag-clickable').filter(has_text='Test tag').click()
+            expect(page.locator('#tag-result-total')).to_have_text('51')
+            expect(page.get_by_text('Tag article 51', exact=True)).to_be_visible()
+            browser.close()
+
     def test_register_submit_moderate_and_like(self):
         from playwright.sync_api import sync_playwright, expect
 
@@ -29,14 +57,30 @@ class BrowserWorkflowTests(unittest.TestCase):
             page.locator('#password2').fill('test-password-123')
             page.locator('form').first.locator('button[type=submit]').click()
             page.wait_for_url('**/me.html')
+            page.locator('#column-name').fill('Browser column ' + suffix)
+            page.locator('#column-description').fill('A test column')
+            page.locator('#column-save').click()
+            column_row = page.locator('.column-row').filter(has_text='Browser column ' + suffix)
+            expect(column_row).to_be_visible()
+            column_row.get_by_role('button', name='编辑').click()
+            page.locator('#column-description').fill('Updated description')
+            page.locator('#column-save').click()
+            expect(column_row).to_contain_text('Updated description')
             page.goto(BASE + '/write.html')
             page.locator('#f-title').fill(title)
             page.wait_for_function("document.querySelectorAll('#f-category option').length > 1")
             page.locator('#f-category').select_option(index=1)
+            page.locator('#f-column').select_option(label='Browser column ' + suffix)
             page.locator('#f-content').fill('Browser test body')
             page.locator('#submit-btn').click()
             page.wait_for_url('**/me.html')
             expect(page.get_by_text(title, exact=True)).to_be_visible()
+            linked = page.evaluate("""async title => {
+                const token = localStorage.getItem('accessToken');
+                const response = await fetch('/api/my/articles', {headers: {Authorization: 'Bearer ' + token}});
+                return (await response.json()).data.list.find(article => article.title === title);
+            }""", title)
+            self.assertIsNotNone(linked['columnId'])
             admin = browser.new_context()
             ap = admin.new_page()
             ap.on('dialog', lambda dialog: dialog.accept())
