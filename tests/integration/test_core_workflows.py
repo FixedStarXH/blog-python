@@ -4,6 +4,7 @@ import json
 import asyncio
 from io import BytesIO
 import tempfile
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -82,6 +83,90 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(client.get(f"/api/articles/{article_id}/export").status_code, 404)
         self.assertEqual(client.delete(f"/api/my/articles/{article_id}", headers=author).status_code, 200)
         self.assertEqual(client.get(f"/api/articles/{article_id}").status_code, 404)
+
+    def test_concurrent_registration_reports_duplicate(self):
+        from app.services import auth
+        original_hash = auth.hash_password
+        barrier = threading.Barrier(2, timeout=10)
+
+        def synchronized_hash(password):
+            result = original_hash(password)
+            barrier.wait()
+            return result
+
+        def register(email):
+            return self.client.post("/api/auth/register", json={
+                "username": "concurrent_author", "email": email, "password": "password123"
+            })
+
+        with patch("app.services.auth.hash_password", side_effect=synchronized_hash):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                responses = list(pool.map(register, ["race_a@example.test", "race_b@example.test"]))
+        self.assertEqual(sorted(response.status_code for response in responses), [201, 409])
+        duplicate = next(response for response in responses if response.status_code == 409)
+        self.assertEqual(duplicate.json()["code"], 409)
+
+    def test_account_profile_password_and_refresh_contract(self):
+        client = self.client
+        invalid = client.post("/api/auth/register", json={
+            "username": "invalid_email", "email": "not-an-email", "password": "abc123"
+        })
+        self.assertEqual(invalid.status_code, 422)
+        response = client.post("/api/auth/register", json={
+            "username": "account_contract", "email": "account_contract@example.test", "password": "abc123"
+        })
+        self.assertEqual(response.status_code, 201)
+        tokens = response.json()["data"]
+        headers = {"Authorization": "Bearer " + tokens["accessToken"]}
+        profile = {"nickname": "New name", "avatar": "/uploads/profile.png", "bio": "About me"}
+        updated = client.put("/api/auth/me", headers=headers, json=profile)
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["data"], client.get("/api/auth/me", headers=headers).json()["data"])
+        self.assertEqual(updated.json()["data"]["email"], "account_contract@example.test")
+        self.assertEqual(updated.json()["data"]["role"], 1)
+        self.assertEqual(client.put("/api/auth/password", headers=headers, json={
+            "oldPassword": "wrong", "newPassword": "new123"
+        }).status_code, 400)
+        changed = client.put("/api/auth/password", headers=headers, json={
+            "oldPassword": "abc123", "newPassword": "new123"
+        })
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual(client.post("/api/auth/refresh", json={"refreshToken": tokens["refreshToken"]}).status_code, 401)
+        self.assertEqual(client.post("/api/auth/login", json={"username": "account_contract", "password": "abc123"}).status_code, 401)
+        logged_in = client.post("/api/auth/login", json={"username": "account_contract@example.test", "password": "new123"})
+        self.assertEqual(logged_in.status_code, 200)
+        new_tokens = logged_in.json()["data"]
+        new_headers = {"Authorization": "Bearer " + new_tokens["accessToken"]}
+        self.assertEqual(client.post("/api/auth/logout", headers=new_headers, json={
+            "refreshToken": new_tokens["refreshToken"]
+        }).status_code, 200)
+        self.assertEqual(client.post("/api/auth/refresh", json={"refreshToken": new_tokens["refreshToken"]}).status_code, 401)
+
+    def test_submission_rejects_deleted_category_and_preserves_existing_article(self):
+        from app.db.session import SessionLocal
+        from app.models import Category
+        with SessionLocal() as db:
+            category = Category(name="Deleted submission category", deleted_at=datetime.utcnow())
+            db.add(category)
+            db.commit()
+            deleted_id = category.id
+
+        client = self.client
+        tokens = client.post("/api/auth/register", json={
+            "username": "submission_contract", "email": "submission_contract@example.test", "password": "password123"
+        }).json()["data"]
+        headers = {"Authorization": "Bearer " + tokens["accessToken"]}
+        payload = {"title": "Original submission", "content": "original body", "categoryId": 1}
+        created = client.post("/api/my/articles", headers=headers, json=payload)
+        self.assertEqual(created.status_code, 201)
+        article_id = created.json()["data"]["id"]
+        invalid = {**payload, "title": "Changed", "categoryId": deleted_id}
+        self.assertEqual(client.post("/api/my/articles", headers=headers, json=invalid).status_code, 400)
+        self.assertEqual(client.put(f"/api/my/articles/{article_id}", headers=headers, json=invalid).status_code, 400)
+        saved = client.get(f"/api/my/articles/{article_id}", headers=headers).json()["data"]
+        self.assertEqual((saved["title"], saved["categoryId"], saved["status"]), ("Original submission", 1, 2))
+        self.assertEqual(client.get(f"/api/my/articles/{article_id}").status_code, 401)
+        self.assertEqual(client.get("/api/my/articles?status=-1", headers=headers).json()["data"]["total"], 1)
 
     def test_public_list_search_and_featured_paging(self):
         from app.db.session import SessionLocal

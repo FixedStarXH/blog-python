@@ -26,7 +26,7 @@ class ProfileInput(APIModel):
 
 class PasswordInput(APIModel):
     old_password: str = Field(alias="oldPassword", min_length=1, max_length=128)
-    new_password: str = Field(alias="newPassword", min_length=8, max_length=128)
+    new_password: str = Field(alias="newPassword", min_length=6, max_length=128)
 
 
 def token_data(user: User, access: str, refresh: str):
@@ -92,7 +92,7 @@ def update_me(body: ProfileInput, user: User = Depends(current_user), db: Sessio
     user.nickname, user.avatar, user.bio = body.nickname, body.avatar, body.bio
     user.updated_at = datetime.utcnow()
     db.commit()
-    return envelope({"id": user.id, "username": user.username, "nickname": user.nickname, "avatar": user.avatar, "bio": user.bio})
+    return me(user)
 
 
 @router.put("/auth/password")

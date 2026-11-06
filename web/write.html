@@ -461,7 +461,7 @@
         const a = await api.get('/api/my/articles/' + id);
         document.getElementById('page-title').textContent = '编辑文章';
         document.getElementById('submit-btn').textContent = '保存修改';
-        document.getElementById('submit-hint').textContent = '保存后需编辑重新审核才会更新公开展示';
+        document.getElementById('submit-hint').textContent = '已发布文章保存后直接更新，草稿和被驳回的投稿保存后进入审核';
         document.getElementById('f-title').value = a.title;
         document.getElementById('f-summary').value = a.summary || '';
         document.getElementById('f-cover').value = a.coverImage || '';

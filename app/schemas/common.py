@@ -1,5 +1,6 @@
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field
+from email_validator import EmailNotValidError, validate_email
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class APIModel(BaseModel):
@@ -10,6 +11,15 @@ class Credentials(APIModel):
     username: str = Field(min_length=2, max_length=50)
     password: str = Field(min_length=6, max_length=128)
     email: str = Field(default="", max_length=100)
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, value: str) -> str:
+        try:
+            validate_email(value, check_deliverability=False, test_environment=True)
+        except EmailNotValidError as exc:
+            raise ValueError("invalid email address") from exc
+        return value
 
 
 class ArticleInput(APIModel):

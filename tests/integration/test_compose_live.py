@@ -32,6 +32,42 @@ class ComposeIntegrationTests(unittest.TestCase):
         response.raise_for_status()
         return response
 
+    def test_account_and_submission_contract(self):
+        suffix = uuid.uuid4().hex[:12]
+        username = "race_" + suffix
+        invalid = self.client.post("/api/auth/register", json={
+            "username": "invalid_" + suffix, "email": "not-an-email", "password": "abc123"
+        })
+        self.assertEqual(invalid.status_code, 422)
+
+        def register(index):
+            return httpx.post(self.base_url + "/api/auth/register", json={
+                "username": username, "email": f"{suffix}_{index}@validation.test", "password": "abc123"
+            }, timeout=30)
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            responses = list(pool.map(register, range(3)))
+        self.assertEqual(sorted(response.status_code for response in responses), [201, 409, 409])
+        tokens = next(response.json()["data"] for response in responses if response.status_code == 201)
+        headers = {"Authorization": "Bearer " + tokens["accessToken"]}
+        profile = self.request_ok("PUT", "/api/auth/me", headers=headers, json={
+            "nickname": "Updated", "avatar": "", "bio": ""
+        }).json()["data"]
+        self.assertEqual(profile, self.request_ok("GET", "/api/auth/me", headers=headers).json()["data"])
+        self.request_ok("PUT", "/api/auth/password", headers=headers, json={
+            "oldPassword": "abc123", "newPassword": "new123"
+        })
+        self.assertEqual(self.client.post("/api/auth/refresh", json={"refreshToken": tokens["refreshToken"]}).status_code, 401)
+        self.request_ok("POST", "/api/auth/login", json={"username": username, "password": "new123"})
+        category = self.request_ok("POST", "/api/admin/categories", headers=self.admin, json={
+            "name": "deleted_" + suffix
+        }).json()["data"]["id"]
+        self.request_ok("DELETE", f"/api/admin/categories/{category}", headers=self.admin)
+        rejected = self.client.post("/api/my/articles", headers=headers, json={
+            "title": "Invalid category", "content": "body", "categoryId": category
+        })
+        self.assertEqual(rejected.status_code, 400)
+
     def test_navigation_and_archive_contract(self):
         suffix = uuid.uuid4().hex[:12]
         category = self.request_ok("POST", "/api/admin/categories", headers=self.admin,

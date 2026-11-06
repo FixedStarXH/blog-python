@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import hash_password, verify_and_update_password, new_token_pair, token_hash
@@ -19,11 +20,18 @@ def register(db: Session, username: str, email: str, password: str) -> tuple[Use
     if exists:
         raise AuthError("username or email already exists", 409)
     user = User(username=username, email=email, password_hash=hash_password(password), nickname=username)
-    db.add(user)
-    db.flush()
-    access, refresh, digest = new_token_pair(user.id)
-    db.add(RefreshToken(token_hash=digest, user_id=user.id, expires_at=datetime.utcnow() + timedelta(days=settings.refresh_token_days)))
-    db.commit()
+    try:
+        db.add(user)
+        db.flush()
+        access, refresh, digest = new_token_pair(user.id)
+        db.add(RefreshToken(token_hash=digest, user_id=user.id, expires_at=datetime.utcnow() + timedelta(days=settings.refresh_token_days)))
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        duplicate = db.scalar(select(User.id).where(or_(User.username == username, User.email == email)))
+        if duplicate:
+            raise AuthError("username or email already exists", 409) from exc
+        raise
     return user, access, refresh
 
 

@@ -153,7 +153,7 @@ def export_article(article_id: int, format: str = "md", db: Session = Depends(ge
 @router.get("/my/articles")
 def my_articles(user: User = Depends(current_user), db: Session = Depends(get_db), page: int = Query(1, ge=1), pageSize: int = Query(10, ge=1, le=50), status: int | None = None):
     query = select(Article).where(Article.author_id == user.id, Article.deleted_at.is_(None))
-    if status is not None:
+    if status is not None and status >= 0:
         query = query.where(Article.status == status)
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     rows = db.scalars(query.order_by(Article.updated_at.desc()).offset((page - 1) * pageSize).limit(pageSize)).all()
@@ -162,7 +162,8 @@ def my_articles(user: User = Depends(current_user), db: Session = Depends(get_db
 
 @router.post("/my/articles", status_code=201)
 def create_my_article(body: ArticleInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    if not db.get(Category,body.category_id): raise DomainError("category not found",400)
+    if not db.scalar(select(Category.id).where(Category.id == body.category_id, Category.deleted_at.is_(None))):
+        raise DomainError("category not found", 400)
     if body.column_id and not db.scalar(select(ColumnModel.id).where(ColumnModel.id==body.column_id,ColumnModel.author_id==user.id,ColumnModel.deleted_at.is_(None))): raise DomainError("column not found",400)
     a = Article(author_id=user.id, title=body.title, content=body.content, summary=body.summary, cover_image=body.cover_image, source_url=body.source_url, password=hash_password(body.password) if body.password else "", category_id=body.category_id, column_id=body.column_id, status=2, publish_at=_parse_datetime(body.publish_at))
     a.tags = db.scalars(select(Tag).where(Tag.id.in_(body.tag_ids), Tag.deleted_at.is_(None))).all() if body.tag_ids else []
@@ -182,7 +183,8 @@ def get_my_article(article_id: int, user: User = Depends(current_user), db: Sess
 def update_my_article(article_id: int, body: ArticleInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
     a = db.scalar(select(Article).where(Article.id == article_id, Article.author_id == user.id, Article.deleted_at.is_(None)))
     if not a: raise DomainError("article not found", 404)
-    if not db.get(Category,body.category_id): raise DomainError("category not found",400)
+    if not db.scalar(select(Category.id).where(Category.id == body.category_id, Category.deleted_at.is_(None))):
+        raise DomainError("category not found", 400)
     if body.column_id and not db.scalar(select(ColumnModel.id).where(ColumnModel.id==body.column_id,ColumnModel.author_id==user.id,ColumnModel.deleted_at.is_(None))): raise DomainError("column not found",400)
     if body.clear_password and body.password: raise DomainError("choose a new password or clear the existing password")
     for attr, value in (("title", body.title), ("content", body.content), ("summary", body.summary), ("cover_image", body.cover_image), ("source_url", body.source_url), ("category_id", body.category_id), ("column_id", body.column_id)):
