@@ -49,7 +49,14 @@ class ArticleUnlockInput(APIModel):
 class CommentInput(APIModel):
     content: str = Field(min_length=1, max_length=1000)
     nickname: str = Field(default="", max_length=20)
-    parent_id: int | None = Field(default=None, alias="parentId")
+    parent_id: int | None = Field(default=None, alias="parentId", gt=0)
+
+    @field_validator("content")
+    @classmethod
+    def nonblank_content(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("comment cannot be blank")
+        return value
 
 
 class CommentStatusInput(APIModel):

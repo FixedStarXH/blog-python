@@ -577,14 +577,41 @@ function initEmojiPicker() {
   });
 }
 
-async function loadComments() {
+let commentPage = 0;
+let commentTotal = 0;
+let loadedComments = [];
+let commentLoadVersion = 0;
+let commentsHaveMore = false;
+
+async function loadComments(append = false) {
   const listEl = document.getElementById('comment-list');
+  const version = append ? commentLoadVersion : ++commentLoadVersion;
+  const nextPage = append ? commentPage + 1 : 1;
+  const button = document.getElementById('load-more-comments');
+  if (button) {
+    button.disabled = true;
+    button.textContent = '加载中…';
+  }
   try {
-    const data = await api.get(`/api/articles/${id}/comments?page=1&pageSize=50`);
+    const data = await api.get(`/api/articles/${id}/comments?page=${nextPage}&pageSize=50`);
+    if (version !== commentLoadVersion) return;
+    commentPage = nextPage;
+    commentTotal = data.total;
+    const existing = new Map((append ? loadedComments : []).map(comment => [comment.id, comment]));
+    data.list.forEach(comment => existing.set(comment.id, comment));
+    loadedComments = Array.from(existing.values());
+    commentsHaveMore = data.list.length === 50 && loadedComments.length < commentTotal;
     document.getElementById('comment-total').textContent = data.total + ' 条';
-    renderComments(data.list);
+    renderComments(loadedComments);
   } catch (e) {
-    listEl.innerHTML = '<div class="empty">评论加载失败</div>';
+    if (version !== commentLoadVersion) return;
+    if (append && button) {
+      button.disabled = false;
+      button.textContent = '重试加载';
+      toast('评论加载失败，请重试', true);
+    } else {
+      listEl.innerHTML = '<div class="empty">评论加载失败</div>';
+    }
   }
 }
 
@@ -594,12 +621,28 @@ function renderComments(list) {
     listEl.innerHTML = '<div class="empty">还没有评论,来抢沙发~</div>';
     return;
   }
-  const top = list.filter(c => !c.parentId);
-  const reply = list.filter(c => c.parentId);
-
-  // id → 昵称 映射：楼中楼显示"回复 @xxx"需要查父评论的昵称
-  const nameMap = {};
-  list.forEach(c => { nameMap[c.id] = c.nickname || '匿名'; });
+  const byId = new Map(list.map(comment => [comment.id, comment]));
+  const top = [];
+  const replies = new Map();
+  for (const comment of list) {
+    let root = comment;
+    const visited = [comment.id];
+    while (root.parentId && byId.has(root.parentId)) {
+      const cycleStart = visited.indexOf(root.parentId);
+      if (cycleStart !== -1) {
+        root = byId.get(Math.min(...visited.slice(cycleStart)));
+        break;
+      }
+      visited.push(root.parentId);
+      root = byId.get(root.parentId);
+    }
+    if (root.id === comment.id) {
+      top.push(comment);
+    } else {
+      if (!replies.has(root.id)) replies.set(root.id, []);
+      replies.get(root.id).push(comment);
+    }
+  }
 
   listEl.innerHTML = top.map((c, idx) => `
     <div class="comment-item">
@@ -613,16 +656,18 @@ function renderComments(list) {
         <button class="c-reply-btn" data-reply-id="${c.id}" data-reply-name="${esc(c.nickname || '匿名')}">回复</button>
         <button class="c-like-btn${localStorage.getItem('cliked_' + c.id) ? ' liked' : ''}" data-like-id="${c.id}" title="点赞"><span class="c-heart">${localStorage.getItem('cliked_' + c.id) ? '❤' : '♡'}</span><em>${c.likeCount || 0}</em></button>
       </div>
-      ${reply.filter(r => r.parentId === c.id).map(r => `
+      ${(replies.get(c.id) || []).map(r => `
         <div class="reply">
           <div class="c-meta">
-            <span class="c-name">${esc(r.nickname || '匿名')}<em class="c-reply-to">回复 @${esc(nameMap[r.parentId] || '')}</em></span>
+            <span class="c-name">${esc(r.nickname || '匿名')}<em class="c-reply-to">回复 @${esc(byId.get(r.parentId)?.nickname || '匿名')}</em></span>
             <span class="c-time">${fmtDate(r.createdAt)}</span>
           </div>
           <div class="c-body">${renderCommentText(r.content)}</div>
           <button class="c-like-btn${localStorage.getItem('cliked_' + r.id) ? ' liked' : ''}" data-like-id="${r.id}" title="点赞"><span class="c-heart">${localStorage.getItem('cliked_' + r.id) ? '❤' : '♡'}</span><em>${r.likeCount || 0}</em></button>
         </div>`).join('')}
-    </div>`).join('');
+    </div>`).join('') + (commentsHaveMore
+      ? '<button type="button" class="submit" id="load-more-comments">加载更多评论</button>'
+      : '');
 
   // Markdown 渲染后的链接安全：一律新窗口打开 + noopener，防 window.opener 钓鱼
   listEl.querySelectorAll('a').forEach(a => {
@@ -643,6 +688,7 @@ function renderComments(list) {
     }
     const likeBtn = e.target.closest('.c-like-btn');
     if (likeBtn) likeComment(Number(likeBtn.dataset.likeId), likeBtn);
+    if (e.target.closest('#load-more-comments')) loadComments(true);
   };
 }
 
@@ -653,7 +699,21 @@ function renderCommentText(text) {
   if (!text) return '';
   if (!window.marked) return esc(text); // marked 未加载（如离线）时退回纯文本
   try {
-    return marked.parse(esc(text), { breaks: true, gfm: true });
+    const template = document.createElement('template');
+    template.innerHTML = marked.parse(esc(text), { breaks: true, gfm: true });
+    template.content.querySelectorAll('[href], [src]').forEach(element => {
+      for (const attribute of ['href', 'src']) {
+        if (!element.hasAttribute(attribute)) continue;
+        try {
+          const url = new URL(element.getAttribute(attribute), location.href);
+          const allowed = attribute === 'href' ? ['http:', 'https:', 'mailto:'] : ['http:', 'https:'];
+          if (!allowed.includes(url.protocol)) element.removeAttribute(attribute);
+        } catch (e) {
+          element.removeAttribute(attribute);
+        }
+      }
+    });
+    return template.innerHTML;
   } catch (e) {
     return esc(text);
   }

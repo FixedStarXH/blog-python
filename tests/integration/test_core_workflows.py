@@ -531,6 +531,49 @@ class CoreWorkflowTests(unittest.TestCase):
                 self.assertEqual(db.get(Article, article_id).view_count, 20)
                 self.assertEqual(db.scalar(select(func.count()).select_from(MetricEvent).where(MetricEvent.id.in_(ids), MetricEvent.counted.is_(False))), 0)
 
+    def test_comment_pagination_replies_and_concurrent_likes(self):
+        from sqlalchemy import func, select
+        from app.db.session import SessionLocal
+        from app.models import Article, Comment, MetricEvent
+
+        with SessionLocal() as db:
+            article = Article(title="Comment pages", content="body", author_id=1, category_id=1, status=1)
+            db.add(article)
+            db.flush()
+            rows = [Comment(article_id=article.id, nickname="Reader", content=f"Comment {i}",
+                            status=1, created_at=datetime(2024, 1, 1)) for i in range(52)]
+            db.add_all(rows)
+            db.commit()
+            article_id, first_id = article.id, rows[0].id
+
+        path = f"/api/articles/{article_id}/comments"
+        first = self.client.get(path + "?page=1&pageSize=50").json()["data"]
+        second = self.client.get(path + "?page=2&pageSize=50").json()["data"]
+        self.assertEqual(first["total"], 52)
+        self.assertEqual(len(first["list"]), 50)
+        self.assertEqual(len(second["list"]), 2)
+        self.assertTrue({row["id"] for row in first["list"]}.isdisjoint(row["id"] for row in second["list"]))
+        for query in ("?page=0", "?pageSize=0", "?pageSize=101"):
+            self.assertEqual(self.client.get(path + query).status_code, 422)
+        for body in ({"content": "   "}, {"content": "reply", "parentId": 0}):
+            self.assertEqual(self.client.post(path, json=body).status_code, 422)
+        reply = self.client.post(path, json={"content": "reply", "parentId": first_id})
+        self.assertEqual(reply.status_code, 201)
+        self.assertEqual(reply.json()["data"]["parentId"], first_id)
+        self.assertEqual(reply.json()["data"]["status"], 0)
+        self.assertEqual(self.client.post(path, json={"content": "bad parent", "parentId": reply.json()["data"]["id"]}).status_code, 404)
+        self.assertEqual(self.client.put(f"/api/admin/comments/{first_id}/approve").status_code, 401)
+        like_path = f"{path}/{first_id}/like"
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            responses = list(pool.map(lambda _: self.client.put(like_path), range(6)))
+        self.assertTrue(all(response.status_code == 200 for response in responses))
+        self.assertTrue(all(response.json()["data"]["likeCount"] == 1 for response in responses))
+        with SessionLocal() as db:
+            self.assertEqual(db.get(Comment, first_id).like_count, 1)
+            self.assertEqual(db.scalar(select(func.count()).select_from(MetricEvent).where(
+                MetricEvent.article_id == article_id, MetricEvent.kind == "c_like"
+            )), 1)
+
     def test_comment_nickname_and_moderation_contract(self):
         from app.db.session import SessionLocal
         from app.models import Article

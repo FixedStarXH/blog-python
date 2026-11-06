@@ -72,6 +72,36 @@ class BrowserWorkflowTests(unittest.TestCase):
             expect(page.locator('#like-num')).to_have_text('1')
             link.click()
             expect(page.locator('#like-num')).to_have_text('0')
+            def mock_comment_pages(route):
+                from urllib.parse import parse_qs, urlsplit
+                requested_page = parse_qs(urlsplit(route.request.url).query).get("page", ["1"])[0]
+                if requested_page == "1":
+                    items = [{"id": i, "nickname": "Reader", "content": f"Page comment {i}",
+                              "parentId": None, "likeCount": 0, "createdAt": "2024-01-01T00:00:00"}
+                             for i in range(1, 51)]
+                else:
+                    items = [{"id": 51, "nickname": "Reply", "content": "Visible orphan reply [unsafe](javascript:alert(1))",
+                              "parentId": 9999, "likeCount": 0, "createdAt": "2024-01-01T00:00:00"}]
+                route.fulfill(json={"code": 200, "message": "success",
+                                    "data": {"list": items, "total": 51, "page": int(requested_page), "pageSize": 50}})
+
+            page.route(f"**/api/articles/{article_id}/comments?*", mock_comment_pages)
+            page.reload()
+            expect(page.locator('#load-more-comments')).to_be_visible()
+            expect(page.get_by_text('Visible orphan reply')).to_have_count(0)
+            page.locator('#load-more-comments').click()
+            expect(page.get_by_text('Visible orphan reply', exact=False)).to_be_visible()
+            expect(page.locator('#comment-list a[href^="javascript:"]')).to_have_count(0)
+            expect(page.locator('#load-more-comments')).to_have_count(0)
+            safe_markup = page.evaluate("""() => {
+                const previous = window.marked;
+                window.marked = {parse: () => '<a href="javascript:alert(1)">unsafe</a><a href="/ok">safe</a>'};
+                const result = renderCommentText('example');
+                window.marked = previous;
+                return result;
+            }""")
+            self.assertNotIn("javascript:", safe_markup)
+            self.assertIn('href="/ok"', safe_markup)
             ap.goto(BASE + '/admin/articles.html')
             ap.get_by_role('button', name='+ 新建文章').click()
             ap.wait_for_function("document.querySelectorAll('#a-categoryId option').length > 0")

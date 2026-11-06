@@ -17,11 +17,11 @@ from app.schemas.common import CommentBatchInput, CommentStatusInput
 router = APIRouter(prefix="/admin")
 
 @router.get("/comments")
-def comments(status: int | None = None, page: int = 1, pageSize: int = 20, db: Session = Depends(get_db), user: User = Depends(require_editor)):
+def comments(status: int | None = None, page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), db: Session = Depends(get_db), user: User = Depends(require_editor)):
     q = select(Comment).where(Comment.deleted_at.is_(None))
-    if status is not None and status != -1: q = q.where(Comment.status == status)
+    if status is not None and status >= 0: q = q.where(Comment.status == status)
     total = db.scalar(select(func.count()).select_from(q.subquery())) or 0
-    rows = db.scalars(q.order_by(Comment.created_at.desc()).offset((page-1)*pageSize).limit(pageSize)).all()
+    rows = db.scalars(q.order_by(Comment.created_at.desc(), Comment.id.desc()).offset((page-1)*pageSize).limit(pageSize)).all()
     article_ids={c.article_id for c in rows}
     titles={a.id:a.title for a in db.scalars(select(Article).where(Article.id.in_(article_ids))).all()} if article_ids else {}
     return envelope({"list":[{"id":c.id,"articleId":c.article_id,"articleTitle":titles.get(c.article_id,""),"nickname":c.nickname,"content":c.content,"status":c.status,"createdAt":c.created_at.isoformat()} for c in rows],"total":total,"page":page,"pageSize":pageSize})

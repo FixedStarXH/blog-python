@@ -181,6 +181,12 @@ class ComposeIntegrationTests(unittest.TestCase):
         self.assertEqual(self.request_ok("GET", f"/api/articles/{article_id}/comments").json()["data"]["total"], 0)
         self.request_ok("PUT", f"/api/admin/comments/{comment['id']}/approve", headers=self.admin)
         self.assertEqual(self.request_ok("GET", f"/api/articles/{article_id}/comments").json()["data"]["total"], 1)
+        like_path = f"/api/articles/{article_id}/comments/{comment['id']}/like"
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            likes = list(pool.map(lambda _: httpx.put(self.base_url + like_path, timeout=30), range(4)))
+        self.assertTrue(all(response.status_code == 200 for response in likes))
+        self.assertTrue(all(response.json()["data"]["likeCount"] == 1 for response in likes))
+        self.assertEqual(self.client.get(f"/api/articles/{article_id}/comments?pageSize=0").status_code, 422)
         self.assertIn(f"/article.html?id={article_id}", self.request_ok("GET", "/api/rss.xml").text)
 
         self.request_ok("GET", "/api/categories")
