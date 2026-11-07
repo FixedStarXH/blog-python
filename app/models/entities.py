@@ -177,4 +177,19 @@ class ArticleChunk(Base):
     indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ArticleIndexJob(Base):
+    """Durable, coalesced indexing work for the latest public article version."""
+    __tablename__ = "article_index_jobs"
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id", ondelete="CASCADE"), primary_key=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    embedding_model: Mapped[str] = mapped_column(String(100), default="")
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    last_error: Mapped[str] = mapped_column(String(500), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 Index("ix_articles_public", Article.status, Article.deleted_at, Article.created_at)

@@ -1,7 +1,15 @@
 import httpx
 import json
+import math
 from app.core.config import settings
 from app.core.errors import DomainError
+
+
+class EmbeddingUnsupported(DomainError):
+    """Provider explicitly reported that it does not support embeddings."""
+
+    def __init__(self):
+        super().__init__("Embedding is explicitly unsupported by the provider", 503)
 
 
 async def request_json(base: str, key: str, path: str, payload: dict):
@@ -13,6 +21,15 @@ async def request_json(base: str, key: str, path: str, payload: dict):
         response.raise_for_status()
         return response.json()
     except httpx.HTTPStatusError as exc:
+        if path == "/embeddings":
+            try:
+                body = exc.response.json()
+                error = body.get("error", {}) if isinstance(body, dict) else {}
+                code = error.get("code") or body.get("code") if isinstance(error, dict) else body.get("code")
+                if str(code).lower() in {"embedding_not_supported", "embeddings_not_supported", "unsupported_embedding"}:
+                    raise EmbeddingUnsupported() from exc
+            except (ValueError, AttributeError, TypeError):
+                pass
         raise DomainError(f"AI provider returned HTTP {exc.response.status_code}", 502) from exc
     except httpx.HTTPError as exc:
         raise DomainError("AI provider unavailable", 502) from exc
@@ -59,9 +76,14 @@ async def embed(texts: list[str]):
     if not settings.embedding_base_url or not settings.embedding_api_key:
         raise DomainError("Embedding provider is not configured",503)
     data=await request_json(settings.embedding_base_url,settings.embedding_api_key,"/embeddings",{"model":settings.embedding_model,"input":texts})
-    vectors=[item.get("embedding") for item in data.get("data",[])]
+    items=data.get("data") if isinstance(data,dict) else None
+    if not isinstance(items,list):
+        raise DomainError("invalid embedding response",502)
+    vectors=[item.get("embedding") if isinstance(item,dict) else None for item in items]
     if len(vectors)!=len(texts) or any(not isinstance(v,list) for v in vectors):
         raise DomainError("invalid embedding response",502)
     dimension=settings.embedding_dimension or (len(vectors[0]) if vectors else 0)
-    if any(len(v)!=dimension for v in vectors): raise DomainError("embedding dimension mismatch",502)
+    if dimension < 1 or any(len(v)!=dimension for v in vectors): raise DomainError("embedding dimension mismatch",502)
+    if any(any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in vector) for vector in vectors):
+        raise DomainError("embedding values must be finite numbers",502)
     return vectors

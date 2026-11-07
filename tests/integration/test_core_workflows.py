@@ -1153,6 +1153,187 @@ class CoreWorkflowTests(unittest.TestCase):
             self.assertEqual(chunk.content, "new text")
             self.assertEqual(chunk.embedding_model, settings.embedding_model)
 
+    def test_persistent_index_job_coalesces_retries_and_swaps_atomically(self):
+        from sqlalchemy import select
+        from app.db.session import SessionLocal
+        from app.models import Article, ArticleChunk, ArticleIndexJob
+        from app.rag.jobs import enqueue_article, claim_due_jobs, process_index_job
+
+        with SessionLocal() as db:
+            article=Article(title="Queued index",content="old source",author_id=1,category_id=1,status=1)
+            db.add(article); db.flush(); article_id=article.id
+            db.add(ArticleChunk(article_id=article_id,chunk_index=0,content="old indexed source",embedding=b"[1.0,0.0]",embedding_dim=2))
+            enqueue_article(db,article); db.commit()
+            article.content="latest source text"; db.commit()
+            enqueue_article(db,article); enqueue_article(db,article); db.commit()
+            job=db.get(ArticleIndexJob,article_id)
+            self.assertEqual((job.status,job.attempts),("pending",0))
+            self.assertEqual(len(db.scalars(select(ArticleIndexJob).where(ArticleIndexJob.article_id==article_id)).all()),1)
+            self.assertEqual(claim_due_jobs(db,article_id=article_id),[article_id])
+            self.assertEqual(claim_due_jobs(db,article_id=article_id),[])
+
+        with patch("app.rag.jobs.embed",new=AsyncMock(side_effect=RuntimeError("temporary provider failure"))):
+            self.assertEqual(asyncio.run(process_index_job(article_id)),0)
+        with SessionLocal() as db:
+            job=db.get(ArticleIndexJob,article_id)
+            self.assertEqual((job.status,job.attempts),("retry",1))
+            self.assertTrue(job.last_error.startswith("worker:"))
+            self.assertGreater(job.next_attempt_at,datetime.utcnow()+timedelta(seconds=25))
+            self.assertEqual(db.scalar(select(ArticleChunk).where(ArticleChunk.article_id==article_id)).content,"old indexed source")
+            job.next_attempt_at=datetime.utcnow()-timedelta(seconds=1); db.commit()
+            self.assertEqual(claim_due_jobs(db,article_id=article_id),[article_id])
+
+        with patch("app.rag.jobs.embed",new=AsyncMock(return_value=[[1.0,0.0]])):
+            self.assertEqual(asyncio.run(process_index_job(article_id)),1)
+        with SessionLocal() as db:
+            job=db.get(ArticleIndexJob,article_id)
+            chunk=db.scalar(select(ArticleChunk).where(ArticleChunk.article_id==article_id))
+            self.assertEqual((job.status,job.attempts,job.chunk_count),("complete",2,1))
+            self.assertEqual(chunk.content,"latest source text")
+            db.delete(chunk); db.commit()
+            enqueue_article(db,db.get(Article,article_id)); db.commit()
+            self.assertEqual(db.get(ArticleIndexJob,article_id).status,"pending")
+
+    def test_index_worker_discards_result_when_source_changes_mid_request(self):
+        from sqlalchemy import select
+        from app.db.session import SessionLocal
+        from app.models import Article, ArticleChunk, ArticleIndexJob
+        from app.rag.jobs import enqueue_article, claim_due_jobs, process_index_job
+
+        with SessionLocal() as db:
+            article=Article(title="Changing source",content="version one",author_id=1,category_id=1,status=1)
+            db.add(article); db.flush(); article_id=article.id
+            db.add(ArticleChunk(article_id=article_id,chunk_index=0,content="previous valid index",embedding=b"[1,0]",embedding_dim=2))
+            enqueue_article(db,article); db.commit(); self.assertEqual(claim_due_jobs(db,article_id=article_id),[article_id])
+
+        async def change_during_embed(_chunks):
+            with SessionLocal() as db:
+                db.get(Article,article_id).content="version two"; db.commit()
+            return [[1.0,0.0]]
+
+        with patch("app.rag.jobs.embed",new=AsyncMock(side_effect=change_during_embed)):
+            self.assertEqual(asyncio.run(process_index_job(article_id)),0)
+        with SessionLocal() as db:
+            self.assertEqual(db.get(ArticleIndexJob,article_id).status,"pending")
+            self.assertEqual(db.scalar(select(ArticleChunk).where(ArticleChunk.article_id==article_id)).content,"previous valid index")
+
+    def test_explicit_embedding_unsupported_uses_public_fulltext_fallback(self):
+        from app.db.session import SessionLocal
+        from app.integrations.ai.client import EmbeddingUnsupported
+        from app.models import Article, ArticleChunk
+        from app.rag.indexing import index_article
+
+        with SessionLocal() as db:
+            article=Article(title="Fallback search",content="orchid retrieval fallback marker",author_id=1,category_id=1,status=1)
+            db.add(article); db.commit(); article_id=article.id
+            with patch("app.rag.indexing.embed",new=AsyncMock(side_effect=EmbeddingUnsupported())):
+                self.assertEqual(asyncio.run(index_article(db,article)),1)
+            chunk=db.query(ArticleChunk).filter_by(article_id=article_id).one()
+            self.assertIsNone(chunk.embedding)
+            self.assertEqual(chunk.embedding_model,"fulltext")
+
+        async def events():
+            yield 'data: [DONE]\n\n'
+        with patch("app.api.v1.ai.embed",new=AsyncMock(side_effect=EmbeddingUnsupported())), \
+             patch("app.api.v1.ai.open_chat_stream",new=AsyncMock(return_value=events())) as stream:
+            response=self.client.post("/api/ai/ask",json={"question":"orchid retrieval"})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertIn("orchid retrieval fallback marker",stream.await_args.args[0][0]["content"])
+
+    def test_embedding_vectors_reject_nonfinite_values(self):
+        from app.core.config import settings
+        from app.core.errors import DomainError
+        from app.integrations.ai.client import embed
+        invalid_responses=[
+            ({"data":[]},"invalid embedding response"),
+            ({"data":[{"embedding":[1.0]}]},"dimension mismatch"),
+            ({"data":[{"embedding":[1.0,float("nan")]}]},"finite numbers"),
+        ]
+        with patch.object(settings,"embedding_base_url","http://provider.test/v1"), \
+             patch.object(settings,"embedding_api_key","test-key"), \
+             patch.object(settings,"embedding_dimension",2):
+            for payload,message in invalid_responses:
+                with self.subTest(message=message), patch("app.integrations.ai.client.request_json",new=AsyncMock(return_value=payload)):
+                    with self.assertRaisesRegex(DomainError,message):
+                        asyncio.run(embed(["text"]))
+
+    def test_embedding_fulltext_fallback_requires_explicit_provider_code(self):
+        import httpx
+        from app.core.config import settings
+        from app.core.errors import DomainError
+        from app.integrations.ai.client import EmbeddingUnsupported, embed
+        original_client=httpx.AsyncClient
+
+        async def verify(payload):
+            transport=httpx.MockTransport(lambda request:httpx.Response(404,json=payload))
+            with patch("app.integrations.ai.client.httpx.AsyncClient",
+                       side_effect=lambda **kwargs:original_client(transport=transport,**kwargs)):
+                return await embed(["probe"])
+
+        with patch.object(settings,"embedding_base_url","http://provider.test/v1"), patch.object(settings,"embedding_api_key","test-key"):
+            with self.assertRaises(EmbeddingUnsupported):
+                asyncio.run(verify({"error":{"code":"embedding_not_supported"}}))
+            with self.assertRaises(DomainError) as raised:
+                asyncio.run(verify({"error":{"code":"model_not_found"}}))
+            self.assertNotIsInstance(raised.exception,EmbeddingUnsupported)
+
+    def test_embedding_job_stops_after_maximum_attempts(self):
+        from app.db.session import SessionLocal
+        from app.models import Article, ArticleIndexJob
+        from app.rag.jobs import MAX_ATTEMPTS, enqueue_article, claim_due_jobs, process_index_job
+        with SessionLocal() as db:
+            article=Article(title="Exhaust index",content="retry forever? no",author_id=1,category_id=1,status=1)
+            db.add(article); db.flush(); article_id=article.id
+            enqueue_article(db,article); db.commit()
+        with patch("app.rag.jobs.embed",new=AsyncMock(side_effect=RuntimeError("provider offline"))):
+            for attempt in range(MAX_ATTEMPTS):
+                with SessionLocal() as db:
+                    job=db.get(ArticleIndexJob,article_id)
+                    job.next_attempt_at=datetime.utcnow()-timedelta(seconds=1); db.commit()
+                    self.assertEqual(claim_due_jobs(db,article_id=article_id),[article_id])
+                self.assertEqual(asyncio.run(process_index_job(article_id)),0)
+        with SessionLocal() as db:
+            job=db.get(ArticleIndexJob,article_id)
+            self.assertEqual((job.status,job.attempts),("failed",MAX_ATTEMPTS))
+            self.assertTrue(job.last_error.startswith("worker:"))
+
+    def test_index_job_expired_lease_is_reclaimed_after_worker_restart(self):
+        from app.db.session import SessionLocal
+        from app.models import Article, ArticleIndexJob
+        from app.rag.jobs import enqueue_article, claim_due_jobs
+        with SessionLocal() as db:
+            article=Article(title="Worker restart",content="recover lease",author_id=1,category_id=1,status=1)
+            db.add(article); db.flush(); article_id=article.id
+            enqueue_article(db,article); db.commit()
+            self.assertEqual(claim_due_jobs(db,article_id=article_id),[article_id])
+            job=db.get(ArticleIndexJob,article_id); job.lease_until=datetime.utcnow()-timedelta(seconds=1); db.commit()
+        with SessionLocal() as db:
+            self.assertEqual(claim_due_jobs(db,article_id=article_id),[article_id])
+            job=db.get(ArticleIndexJob,article_id)
+            self.assertEqual((job.status,job.attempts),("processing",2))
+
+    def test_index_job_classifies_authentication_failure_as_terminal(self):
+        from app.core.errors import DomainError
+        from app.db.session import SessionLocal
+        from app.models import Article, ArticleIndexJob
+        from app.rag.jobs import enqueue_article, claim_due_jobs, process_index_job
+        with SessionLocal() as db:
+            article=Article(title="Bad provider credentials",content="secret key not included",author_id=1,category_id=1,status=1)
+            db.add(article); db.flush(); article_id=article.id
+            enqueue_article(db,article); db.commit()
+            self.assertEqual(claim_due_jobs(db,article_id=article_id),[article_id])
+        with patch("app.rag.jobs.embed",new=AsyncMock(side_effect=DomainError("AI provider returned HTTP 401",502))):
+            self.assertEqual(asyncio.run(process_index_job(article_id)),0)
+        with SessionLocal() as db:
+            job=db.get(ArticleIndexJob,article_id)
+            self.assertEqual((job.status,job.attempts),("failed",1))
+            self.assertTrue(job.last_error.startswith("authentication:"))
+            self.assertNotIn("secret key",job.last_error)
+        login=self.client.post("/api/admin/login",json={"username":"admin","password":"123456"}).json()["data"]
+        status=self.client.get("/api/admin/ai/index-status",headers={"Authorization":"Bearer "+login["accessToken"]}).json()["data"]
+        self.assertGreaterEqual(status["jobs"]["failed"],1)
+        self.assertTrue(any(x["articleId"]==article_id and x["error"].startswith("authentication:") for x in status["recentFailures"]))
+
     def test_ai_provider_summary_index_and_streaming(self):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         from threading import Thread
