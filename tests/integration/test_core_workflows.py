@@ -53,6 +53,19 @@ class CoreWorkflowTests(unittest.TestCase):
         cls.env.stop()
         cls.tmp.cleanup()
 
+    def test_security_headers_request_id_and_request_log_redaction(self):
+        with self.assertLogs("blog", level="INFO") as captured:
+            response = self.client.get(
+                "/health?token=do-not-log",
+                headers={"X-Request-ID": "invalid request id"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.headers["X-Request-ID"], "invalid request id")
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertEqual(response.headers["Referrer-Policy"], "strict-origin-when-cross-origin")
+        self.assertNotIn("do-not-log", "\n".join(captured.output))
+
     def test_user_management_permissions_and_token_revocation(self):
         import uuid
 
