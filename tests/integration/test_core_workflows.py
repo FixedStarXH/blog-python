@@ -66,6 +66,24 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(response.headers["Referrer-Policy"], "strict-origin-when-cross-origin")
         self.assertNotIn("do-not-log", "\n".join(captured.output))
 
+    def test_cors_allows_only_configured_origin(self):
+        allowed = self.client.options(
+            "/api/auth/login",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertEqual(allowed.headers.get("Access-Control-Allow-Origin"), "http://localhost:5173")
+        denied = self.client.options(
+            "/api/auth/login",
+            headers={
+                "Origin": "https://attacker.example",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertNotEqual(denied.headers.get("Access-Control-Allow-Origin"), "https://attacker.example")
+
     def test_user_management_permissions_and_token_revocation(self):
         import uuid
 
