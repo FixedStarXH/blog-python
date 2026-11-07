@@ -1,7 +1,4 @@
 from datetime import datetime, timedelta
-from pathlib import Path
-import secrets
-from io import BytesIO
 from fastapi import APIRouter, Depends, File, UploadFile, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -13,7 +10,7 @@ from app.core.security import hash_password
 from app.models import Article, AuditLog, Category, Comment, Image, Link, MetricEvent, SiteSetting, Tag, User
 from app.api.v1.articles import article_data
 from app.api.v1.articles import _parse_datetime
-from app.storage.files import remove_upload
+from app.services import images as image_service
 
 router = APIRouter(prefix="/admin")
 
@@ -70,42 +67,19 @@ def clear_audit(db: Session = Depends(get_db), user: User = Depends(require_admi
 
 @router.post("/upload")
 async def upload(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(require_editor)):
-    allowed = {".jpg":b"\xff\xd8\xff", ".jpeg":b"\xff\xd8\xff", ".png":b"\x89PNG\r\n\x1a\n", ".gif":b"GIF8", ".webp":b"RIFF"}
-    ext = Path(file.filename or "").suffix.lower()
-    if ext not in allowed: raise DomainError("unsupported image type", 415)
-    data = await file.read(5 * 1024 * 1024 + 1)
-    if len(data) > 5 * 1024 * 1024 or not data.startswith(allowed[ext]): raise DomainError("invalid image content or size", 413)
-    try:
-        from PIL import Image as PILImage
-        with PILImage.open(BytesIO(data)) as image:
-            image.verify()
-            expected={"jpg":"JPEG","jpeg":"JPEG","png":"PNG","gif":"GIF","webp":"WEBP"}[ext.lstrip(".")]
-            if image.format!=expected: raise DomainError("image extension does not match its content",415)
-    except DomainError:
-        raise
-    except Exception as exc:
-        raise DomainError("image content is corrupt",415) from exc
-    root = Path(settings.upload_dir).resolve(); root.mkdir(parents=True, exist_ok=True)
-    name = secrets.token_hex(16) + ext; (root / name).write_bytes(data)
-    image = Image(name=name, url=f"/uploads/{name}", size=len(data), ext=ext.lstrip("."), uploader_id=user.id)
-    db.add(image); db.commit(); db.refresh(image)
-    return envelope({"id":image.id,"url":image.url,"name":image.name,"size":image.size})
+    data = await file.read(image_service.MAX_UPLOAD_SIZE + 1)
+    return envelope(image_service.save_image(db, file.filename, data, user.id))
 
 @router.get("/images")
-def images(db: Session = Depends(get_db), user: User = Depends(require_editor), page: int = 1, pageSize: int = 20):
+def images(db: Session = Depends(get_db), user: User = Depends(require_editor), page: int = Query(1, ge=1), pageSize: int = Query(24, ge=1, le=100)):
     q=select(Image); total=db.scalar(select(func.count(Image.id))) or 0
-    rows=db.scalars(q.order_by(Image.created_at.desc()).offset((page-1)*pageSize).limit(pageSize)).all()
-    return envelope({"list":[{"id":x.id,"url":x.url,"name":x.name,"size":x.size,"createdAt":x.created_at.isoformat()} for x in rows],"total":total,"page":page,"pageSize":pageSize})
+    rows=db.scalars(q.order_by(Image.created_at.desc(), Image.id.desc()).offset((page-1)*pageSize).limit(pageSize)).all()
+    return envelope({"list":[{"id":x.id,"url":x.url,"name":x.name,"size":x.size,"ext":x.ext,"uploaderId":x.uploader_id,"createdAt":x.created_at.isoformat()} for x in rows],"total":total,"page":page,"pageSize":pageSize})
 
 @router.delete("/images/{image_id}")
 def delete_image(image_id: int, db: Session = Depends(get_db), user: User = Depends(require_editor)):
-    x=db.get(Image,image_id)
-    if not x: raise DomainError("image not found",404)
-    try:
-        remove_upload(x.url, settings.upload_dir)
-    except ValueError as exc:
-        raise DomainError("invalid stored upload path", 400) from exc
-    db.delete(x); db.commit(); return envelope({})
+    image_service.delete_image(db, image_id)
+    return envelope({})
 
 @router.get("/links")
 def links(db: Session = Depends(get_db), user: User = Depends(require_editor)):

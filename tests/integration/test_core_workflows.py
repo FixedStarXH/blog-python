@@ -1078,6 +1078,97 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(client.delete(f"/api/admin/images/{image['id']}", headers=admin_headers).status_code, 200)
         self.assertEqual(client.get(image["url"]).status_code, 404)
 
+    def test_gallery_upload_pagination_and_validation(self):
+        import uuid
+        from PIL import Image as PILImage
+
+        admin_data = self.client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
+        headers = {"Authorization": "Bearer " + admin_data["accessToken"]}
+        suffix = uuid.uuid4().hex[:8]
+        reader = self.client.post("/api/auth/register", json={
+            "username": "gallery_" + suffix, "email": "gallery_" + suffix + "@example.test", "password": "password123"
+        }).json()["data"]
+        reader_headers = {"Authorization": "Bearer " + reader["accessToken"]}
+        buffer = BytesIO()
+        PILImage.new("RGB", (3, 3), "blue").save(buffer, format="PNG")
+        content = buffer.getvalue()
+        path = "/api/admin/upload"
+        self.assertEqual(self.client.post(path, files={"file": ("image.png", content, "image/png")}).status_code, 401)
+        self.assertEqual(self.client.post(path, headers=reader_headers, files={"file": ("image.png", content, "image/png")}).status_code, 403)
+        self.assertEqual(self.client.post(path, headers=headers, files={"file": ("bad.svg", content, "image/svg+xml")}).status_code, 415)
+        self.assertEqual(self.client.post(path, headers=headers, files={"file": ("bad.jpg", content, "image/jpeg")}).status_code, 415)
+        self.assertEqual(self.client.post(path, headers=headers, files={"file": ("large.png", b"x" * (5 * 1024 * 1024 + 1), "image/png")}).status_code, 413)
+        self.assertEqual(self.client.post(path, headers=headers, files={"file": ("broken.png", b"\x89PNG\r\n\x1a\ninvalid", "image/png")}).status_code, 415)
+        self.assertEqual(self.client.get("/api/admin/images?page=0", headers=headers).status_code, 422)
+        self.assertEqual(self.client.get("/api/admin/images?pageSize=101", headers=headers).status_code, 422)
+
+        first = self.client.post(path, headers=headers, files={"file": ("../../Photo.PNG", content, "image/png")})
+        second = self.client.post(path, headers=headers, files={"file": ("Photo.PNG", content, "image/png")})
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        images = [first.json()["data"], second.json()["data"]]
+        self.assertEqual([item["name"] for item in images], ["Photo.PNG", "Photo.PNG"])
+        self.assertNotEqual(images[0]["url"], images[1]["url"])
+        for item in images:
+            self.assertTrue(item["url"].startswith("/uploads/"))
+            self.assertEqual(self.client.get(item["url"]).content, content)
+        listing = self.client.get("/api/admin/images?pageSize=1", headers=headers).json()["data"]
+        self.assertEqual(listing["list"][0]["id"], images[1]["id"])
+        self.assertEqual(listing["list"][0]["name"], "Photo.PNG")
+        self.assertEqual(listing["list"][0]["ext"], "png")
+        self.assertEqual(listing["list"][0]["uploaderId"], admin_data["user"]["id"])
+        self.assertGreaterEqual(listing["total"], 2)
+        self.assertEqual(self.client.get("/api/admin/images?page=2&pageSize=1", headers=headers).json()["data"]["list"][0]["id"], images[0]["id"])
+        for item in images:
+            self.assertEqual(self.client.delete(f"/api/admin/images/{item['id']}", headers=headers).status_code, 200)
+            self.assertEqual(self.client.get(item["url"]).status_code, 404)
+        self.assertEqual(self.client.delete(f"/api/admin/images/{images[0]['id']}", headers=headers).status_code, 404)
+        for extension, image_format in (("jpg", "JPEG"), ("jpeg", "JPEG"), ("gif", "GIF"), ("webp", "WEBP")):
+            with self.subTest(extension=extension):
+                content_buffer = BytesIO()
+                PILImage.new("RGB", (3, 3), "blue").save(content_buffer, format=image_format)
+                filename = "valid." + extension
+                uploaded = self.client.post(path, headers=headers, files={"file": (filename, content_buffer.getvalue(), "image/" + image_format.lower())})
+                self.assertEqual(uploaded.status_code, 200, uploaded.text)
+                item = uploaded.json()["data"]
+                self.assertEqual(item["name"], filename)
+                self.assertEqual(self.client.get(item["url"]).content, content_buffer.getvalue())
+                self.assertEqual(self.client.delete(f"/api/admin/images/{item['id']}", headers=headers).status_code, 200)
+
+    def test_image_database_failure_restores_file_state(self):
+        from PIL import Image as PILImage
+        from app.core.config import settings
+        from app.core.errors import DomainError
+        from app.db.session import SessionLocal
+        from app.models import Image
+        from app.services import images as image_service
+
+        buffer = BytesIO()
+        PILImage.new("RGB", (2, 2), "green").save(buffer, format="PNG")
+        root = Path(settings.upload_dir)
+        before = {path.name for path in root.iterdir() if path.is_file()}
+        with SessionLocal() as db:
+            with patch.object(db, "commit", side_effect=RuntimeError("test failure")), patch("app.services.images.logger.exception"):
+                with self.assertRaises(DomainError) as error:
+                    image_service.save_image(db, "rollback.png", buffer.getvalue(), 1)
+            self.assertEqual(error.exception.status_code, 500)
+        self.assertEqual({path.name for path in root.iterdir() if path.is_file()}, before)
+
+        admin_data = self.client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
+        headers = {"Authorization": "Bearer " + admin_data["accessToken"]}
+        uploaded = self.client.post("/api/admin/upload", headers=headers,
+                                    files={"file": ("rollback.png", buffer.getvalue(), "image/png")}).json()["data"]
+        disk_file = root / uploaded["url"].rsplit("/", 1)[-1]
+        with SessionLocal() as db:
+            with patch.object(db, "commit", side_effect=RuntimeError("test failure")), patch("app.services.images.logger.exception"):
+                with self.assertRaises(DomainError) as error:
+                    image_service.delete_image(db, uploaded["id"])
+            self.assertEqual(error.exception.status_code, 500)
+            self.assertIsNotNone(db.get(Image, uploaded["id"]))
+        self.assertTrue(disk_file.is_file())
+        self.assertFalse(list(root.glob(".deleting-*")))
+        self.assertEqual(self.client.delete(f"/api/admin/images/{uploaded['id']}", headers=headers).status_code, 200)
+
     def test_imported_nested_image_uses_stored_url_for_deletion(self):
         from app.core.config import settings
         from app.db.session import SessionLocal
@@ -1103,6 +1194,14 @@ class CoreWorkflowTests(unittest.TestCase):
             image_id = image.id
         self.assertEqual(self.client.delete(f"/api/admin/images/{image_id}", headers=headers).status_code, 400)
         self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+        with SessionLocal() as db:
+            missing = Image(name="missing.png", url="/uploads/old/missing.png", size=1, ext="png", uploader_id=1)
+            remote = Image(name="remote.png", url="https://example.test/uploads/remote.png", size=1, ext="png", uploader_id=1)
+            db.add_all([missing, remote])
+            db.commit()
+            missing_id, remote_id = missing.id, remote.id
+        self.assertEqual(self.client.delete(f"/api/admin/images/{missing_id}", headers=headers).status_code, 200)
+        self.assertEqual(self.client.delete(f"/api/admin/images/{remote_id}", headers=headers).status_code, 400)
 
     @unittest.skipUnless(Path("dist/index.html").is_file(), "frontend has not been built")
     def test_frontend_build_and_static_assets_are_served(self):

@@ -9,6 +9,39 @@ import uuid
     "disposable browser test environment not configured",
 )
 class BrowserWorkflowTests(unittest.TestCase):
+    def test_admin_image_gallery_upload_and_delete(self):
+        from io import BytesIO
+        from PIL import Image as PILImage
+        from playwright.sync_api import sync_playwright, expect
+
+        base = os.environ["BLOG_BROWSER_BASE_URL"].rstrip("/")
+        buffer = BytesIO()
+        PILImage.new("RGB", (3, 3), "orange").save(buffer, format="PNG")
+        filename = "Gallery " + uuid.uuid4().hex[:8] + ".png"
+        with sync_playwright() as playwright:
+            executable = os.environ.get("BLOG_BROWSER_EXECUTABLE")
+            browser = playwright.chromium.launch(headless=True, **({"executable_path": executable} if executable else {}))
+            page = browser.new_page()
+            page.on("dialog", lambda dialog: dialog.accept())
+            page.goto(base + "/admin/login.html")
+            page.locator("#username").fill(os.environ["BLOG_BROWSER_ADMIN_USER"])
+            page.locator("#password").fill(os.environ["BLOG_BROWSER_ADMIN_PASSWORD"])
+            page.locator("button[type=submit]").click()
+            page.wait_for_url("**/admin/dashboard.html")
+            page.goto(base + "/admin/images.html")
+            page.locator("#file-input").set_input_files({"name": filename, "mimeType": "image/png", "buffer": buffer.getvalue()})
+            card = page.locator(".image-cell").filter(has_text=filename)
+            expect(card).to_be_visible()
+            expect(card.locator(".image-name")).to_have_text(filename)
+            image_url = card.locator("img").get_attribute("src")
+            self.assertTrue(image_url.startswith("/uploads/"))
+            self.assertEqual(page.request.get(base + image_url).status, 200)
+            expect(card.get_by_role("button", name="复制链接")).to_be_visible()
+            card.get_by_role("button", name="删除 " + filename).click()
+            expect(card).to_have_count(0)
+            self.assertEqual(page.request.get(base + image_url).status, 404)
+            browser.close()
+
     def test_admin_user_management_page(self):
         from playwright.sync_api import sync_playwright, expect
 

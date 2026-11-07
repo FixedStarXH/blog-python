@@ -6,6 +6,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>图库上传 — 后台</title>
   <link rel="stylesheet" href="../css/admin.css?v=19">
+  <style>
+    .upload-zone:focus-visible, .image-copy:focus-visible, .i-del:focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }
+    .image-name { display: block; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; }
+    .image-size { color: var(--gray-6); font-family: var(--mono); font-size: 10px; }
+    .image-copy { display: block; width: 100%; margin-top: 6px; padding: 4px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; }
+    .image-copy:hover { border-color: var(--red); color: var(--red); }
+    .image-missing { width: 100%; aspect-ratio: 1; display: grid; place-items: center; background: var(--paper-2); color: var(--gray-6); font-size: 11px; }
+  </style>
 </head>
 
 <body>
@@ -22,13 +30,13 @@
           <h3>上传图片</h3>
         </div>
         <div class="panel-body">
-          <div class="upload-zone" id="upload-zone">
+          <div class="upload-zone" id="upload-zone" role="button" tabindex="0" aria-label="选择图片上传">
             <div class="ico">⤴</div>
             <p>点击选择图片,或将文件拖到这里</p>
             <p style="font-size:11px;color:var(--gray-a);margin-top:6px;">支持 jpg / png / gif / webp,≤ 5MB</p>
           </div>
           <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.gif,.webp" style="display:none">
-          <div id="uploading" class="loading" style="display:none;">上传中…</div>
+          <div id="uploading" class="loading" style="display:none;" role="status">上传中…</div>
         </div>
       </div>
 
@@ -50,11 +58,14 @@
     initAdmin('images');
     let page = 1;
     const pageSize = 24;
+    let loadingVersion = 0;
+    let uploading = false;
 
     const zone = document.getElementById('upload-zone');
     const input = document.getElementById('file-input');
 
-    zone.addEventListener('click', () => input.click());
+    zone.addEventListener('click', () => { if (!uploading) input.click(); });
+    zone.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && !uploading) { e.preventDefault(); input.click(); } });
     zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
     zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
     zone.addEventListener('drop', e => {
@@ -64,6 +75,11 @@
     input.addEventListener('change', () => { if (input.files.length) upload(input.files[0]); });
 
     async function upload(file) {
+      if (uploading) return;
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (!['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) { toast('仅支持 jpg、png、gif、webp 图片', true); return; }
+      if (file.size > 5 * 1024 * 1024) { toast('图片不能超过 5 MiB', true); return; }
+      uploading = true;
       const fd = new FormData();
       fd.append('file', file);
       document.getElementById('uploading').style.display = 'block';
@@ -72,24 +88,33 @@
         toast('上传成功');
         // 复制 URL 到剪贴板
         try { await navigator.clipboard.writeText(data.url); toast('URL 已复制: ' + data.url); } catch (e) { }
-        reload();
+        reload(1);
       } catch (e) { toast(e.message, true); }
-      document.getElementById('uploading').style.display = 'none';
-      input.value = '';
+      finally {
+        uploading = false;
+        document.getElementById('uploading').style.display = 'none';
+        input.value = '';
+      }
     }
 
     async function reload(p) {
       if (p) page = p;
+      const version = ++loadingVersion;
       try {
         const d = await api.get('/api/admin/images?page=' + page + '&pageSize=' + pageSize);
+        if (version !== loadingVersion) return;
+        const lastPage = Math.max(1, Math.ceil(d.total / pageSize));
+        if (page > lastPage) { page = lastPage; reload(); return; }
         document.getElementById('img-grid').innerHTML = (d.list || []).map(img => `
       <div class="image-cell">
-        <img src="${esc(img.url)}" alt="${esc(img.name)}">
-        <button class="i-del" onclick="delImg(${img.id})">✕</button>
-        <div class="i-url" title="点击复制" data-copy-url="${esc(img.url)}">${esc(img.url)}</div>
+        <img src="${esc(img.url)}" alt="${esc(img.name)}" loading="lazy">
+        <button class="i-del" type="button" aria-label="删除 ${esc(img.name)}" data-delete-id="${img.id}">✕</button>
+        <span class="image-name" title="${esc(img.name)}">${esc(img.name)}</span>
+        <span class="image-size">${Math.ceil(img.size / 1024)} KiB</span>
+        <button type="button" class="image-copy" data-copy-url="${esc(img.url)}" title="${esc(img.url)}">复制链接</button>
       </div>`).join('') || '<div class="empty" style="grid-column:1/-1">暂无图片</div>';
-        renderPager(document.getElementById('pagination'), page, Math.max(1, Math.ceil(d.total / pageSize)), reload);
-      } catch (e) { toast(e.message, true); }
+        renderPager(document.getElementById('pagination'), page, lastPage, reload);
+      } catch (e) { if (version === loadingVersion) toast(e.message, true); }
     }
 
     async function copyUrl(url) {
@@ -99,9 +124,14 @@
 
     // 事件委托处理"复制 URL"：data-* 属性安全传递，避免 onclick 内联拼字符串注入
     document.getElementById('img-grid').addEventListener('click', e => {
+      const del = e.target.closest('[data-delete-id]');
+      if (del) { delImg(Number(del.dataset.deleteId)); return; }
       const el = e.target.closest('[data-copy-url]');
       if (el) copyUrl(el.dataset.copyUrl);
     });
+    document.getElementById('img-grid').addEventListener('error', e => {
+      if (e.target.tagName === 'IMG') e.target.outerHTML = '<div class="image-missing">文件缺失</div>';
+    }, true);
 
     async function delImg(id) {
       if (!confirm('确定删除该图片?')) return;
