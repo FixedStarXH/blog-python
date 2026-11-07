@@ -107,10 +107,19 @@ def views_trend(days: int = Query(7,ge=1,le=90), db: Session=Depends(get_db), us
     return envelope([{"date":(start_day+timedelta(days=i)).isoformat(),"views":counts.get((start_day+timedelta(days=i)).isoformat(),0)} for i in range(days)])
 
 @router.get("/audit-logs")
-def audit_logs(page: int = 1, pageSize: int = 20, db: Session = Depends(get_db), user: User = Depends(require_editor)):
-    q = select(AuditLog); total = db.scalar(select(func.count()).select_from(AuditLog)) or 0
-    rows = db.scalars(q.order_by(AuditLog.created_at.desc()).offset((page-1)*pageSize).limit(pageSize)).all()
-    return envelope({"list":[{"id":x.id,"operatorId":x.operator_id,"username":x.username,"action":x.action,"path":x.path,"ip":x.ip,"createdAt":x.created_at.isoformat()} for x in rows],"total":total,"page":page,"pageSize":pageSize})
+def audit_logs(page: int = Query(1,ge=1), pageSize: int = Query(20,ge=1,le=100), action: str | None = Query(None,max_length=100), status: int | None = Query(None,ge=0,le=1), operatorId: int | None = Query(None,ge=1), targetType: str | None = Query(None,max_length=50), db: Session = Depends(get_db), user: User = Depends(require_editor)):
+    filters=[]
+    if action: filters.append(AuditLog.action==action)
+    if status is not None: filters.append(AuditLog.status==status)
+    if operatorId is not None: filters.append(AuditLog.operator_id==operatorId)
+    if targetType: filters.append(AuditLog.target_type==targetType)
+    query=select(AuditLog).where(*filters)
+    total=db.scalar(select(func.count()).select_from(AuditLog).where(*filters)) or 0
+    rows=db.scalars(query.order_by(AuditLog.created_at.desc(),AuditLog.id.desc()).offset((page-1)*pageSize).limit(pageSize)).all()
+    role_names={0:"未认证",1:"用户",2:"编辑",3:"管理员"}
+    recent_actions=db.scalars(select(AuditLog.action).order_by(AuditLog.created_at.desc(),AuditLog.id.desc()).limit(1000)).all()
+    actions=sorted(set(recent_actions))
+    return envelope({"list":[{"id":x.id,"operatorId":x.operator_id,"username":x.username,"role":x.role,"roleName":role_names.get(x.role,"未知"),"action":x.action,"method":x.method,"path":x.path,"targetType":x.target_type,"targetId":x.target_id,"detail":x.detail,"status":x.status,"ip":x.ip,"createdAt":x.created_at.isoformat()} for x in rows],"total":total,"page":page,"pageSize":pageSize,"actions":actions})
 
 @router.delete("/audit-logs")
 def clear_audit(db: Session = Depends(get_db), user: User = Depends(require_admin)):

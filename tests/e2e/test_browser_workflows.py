@@ -1,5 +1,6 @@
 """Opt-in browser test for a disposable, isolated Compose environment."""
 import os
+import json
 import unittest
 import uuid
 
@@ -9,6 +10,43 @@ import uuid
     "disposable browser test environment not configured",
 )
 class BrowserWorkflowTests(unittest.TestCase):
+    def test_admin_audit_filter_and_clear_page(self):
+        from playwright.sync_api import sync_playwright, expect
+
+        base=os.environ["BLOG_BROWSER_BASE_URL"].rstrip("/")
+        suffix=uuid.uuid4().hex[:8]
+        with sync_playwright() as playwright:
+            executable=os.environ.get("BLOG_BROWSER_EXECUTABLE")
+            browser=playwright.chromium.launch(headless=True,**({"executable_path":executable} if executable else {}))
+            page=browser.new_page(viewport={"width":1280,"height":900})
+            page.on("dialog",lambda dialog:dialog.accept())
+            page.goto(base+"/admin/login.html")
+            page.locator("#username").fill(os.environ["BLOG_BROWSER_ADMIN_USER"])
+            page.locator("#password").fill(os.environ["BLOG_BROWSER_ADMIN_PASSWORD"])
+            page.locator("button[type=submit]").click()
+            page.wait_for_url("**/admin/dashboard.html")
+            token=page.evaluate("localStorage.getItem('accessToken')")
+            headers={"Authorization":"Bearer "+token}
+            headers={**headers,"Content-Type":"application/json"}
+            created=page.request.post(base+"/api/admin/links",headers=headers,data=json.dumps({"name":"Audit UI "+suffix,"url":"https://example.test/"+suffix,"enabled":True}))
+            self.assertEqual(created.status,201,created.text())
+            invalid=page.request.post(base+"/api/admin/links",headers=headers,data=json.dumps({"name":"Bad audit "+suffix,"url":"javascript:alert(1)"}))
+            self.assertEqual(invalid.status,422)
+
+            page.goto(base+"/admin/audit.html")
+            action="POST /api/admin/links"
+            page.locator("#f-action").select_option(label=action)
+            page.locator("#f-status").select_option("0")
+            expect(page.locator("#tbody")).to_contain_text("失败")
+            page.locator("#f-status").select_option("1")
+            row=page.locator("#tbody tr").filter(has_text="links #"+str(created.json()["data"]["id"]))
+            expect(row).to_contain_text("成功")
+            page.locator("#btn-clear").click()
+            expect(page.get_by_text("已清空")).to_be_visible()
+            expect(page.locator("#tbody")).to_contain_text("DELETE /api/admin/audit-logs")
+            expect(page.locator("#tbody")).not_to_contain_text(action)
+            browser.close()
+
     def test_admin_site_operations_pages(self):
         from playwright.sync_api import sync_playwright, expect
 

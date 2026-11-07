@@ -20,32 +20,11 @@
       <div class="toolbar">
         <select id="f-action" onchange="reload(1)">
           <option value="">全部动作</option>
-          <option>新建文章</option>
-          <option>更新文章</option>
-          <option>删除文章</option>
-          <option>审核通过文章</option>
-          <option>驳回文章</option>
-          <option>批量操作文章</option>
-          <option>新建分类</option>
-          <option>删除分类</option>
-          <option>新建标签</option>
-          <option>删除标签</option>
-          <option>上传图片</option>
-          <option>删除图片</option>
-          <option>新建友链</option>
-          <option>删除友链</option>
-          <option>更新站点设置</option>
-          <option>修改用户状态</option>
-          <option>修改用户角色</option>
-          <option>审核通过评论</option>
-          <option>驳回评论</option>
-          <option>修改评论状态</option>
-          <option>删除评论</option>
-          <option>批量操作评论</option>
-          <option>后台登录</option>
-          <option>用户注册</option>
-          <option>退出登录</option>
-          <option>清空审计日志</option>
+        </select>
+        <select id="f-status" onchange="reload(1)">
+          <option value="">全部结果</option>
+          <option value="1">成功</option>
+          <option value="0">失败</option>
         </select>
         <span class="toolbar-hint">记录后台所有写操作与登录尝试，防篡改、可追溯</span>
         <button class="btn sm danger" id="btn-clear" onclick="clearLogs()" style="display:none">清空日志</button>
@@ -88,10 +67,16 @@
     async function reload(p) {
       if (p) page = p;
       const action = document.getElementById('f-action').value;
+      const status = document.getElementById('f-status').value;
       const q = new URLSearchParams({ page, pageSize });
       if (action) q.set('action', action);
+      if (status !== '') q.set('status', status);
       try {
         const d = await api.get('/api/admin/audit-logs?' + q.toString());
+        const filter = document.getElementById('f-action');
+        const selected = filter.value;
+        filter.replaceChildren(new Option('全部动作', ''), ...(d.actions || []).map(value => new Option(value, value)));
+        filter.value = selected;
         document.getElementById('tbody').innerHTML = (d.list || []).map(it => `
       <tr>
         <td style="font-family:monospace;font-size:12px;">${fmtDateTime(it.createdAt)}</td>
@@ -112,7 +97,9 @@
       try {
         await api.del('/api/admin/audit-logs');
         toast('已清空');
-        reload();
+        document.getElementById('f-action').value = '';
+        document.getElementById('f-status').value = '';
+        reload(1);
       } catch (e) { toast(e.message, true); }
     }
 

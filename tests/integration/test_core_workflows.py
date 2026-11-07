@@ -575,11 +575,17 @@ class CoreWorkflowTests(unittest.TestCase):
         old_redis = self.app.state.redis
         self.app.state.redis = Cache()
         try:
-            first = self.client.get(path)
+            first = self.client.get(path,headers={"X-Request-ID":"trace-cache-miss"})
             self.assertEqual(first.headers["X-Cache"], "MISS")
+            self.assertEqual(first.headers["X-Request-ID"],"trace-cache-miss")
             self.assertNotIn("onerror", first.json()["data"]["content"])
-            second = self.client.get(path)
+            with self.assertLogs("blog",level="INFO") as captured:
+                second = self.client.get(path,headers={"X-Request-ID":"trace-cache-hit"})
             self.assertEqual(second.headers["X-Cache"], "HIT")
+            self.assertEqual(second.headers["X-Request-ID"],"trace-cache-hit")
+            log_line=next(line for line in captured.output if '"event":"http_request"' in line)
+            cache_log=json.loads(log_line[log_line.index("{"):])
+            self.assertEqual((cache_log["request_id"],cache_log["cache"]),("trace-cache-hit","HIT"))
             self.assertEqual(second.json()["data"]["content"], first.json()["data"]["content"])
         finally:
             self.app.state.redis = old_redis
@@ -669,6 +675,141 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(rss.tag,"rss")
         self.assertEqual(rss.findtext("channel/title"),"Ops & Blog")
         self.assertIsNotNone(sitemap.find("{http://www.sitemaps.org/schemas/sitemap/0.9}url"))
+
+    def test_audit_records_results_filters_and_clear_semantics(self):
+        from sqlalchemy import select
+        from app.db.session import SessionLocal
+        from app.models import AuditLog
+
+        login=self.client.post("/api/admin/login",json={"username":"admin","password":"123456"}).json()["data"]
+        admin={"Authorization":"Bearer "+login["accessToken"]}
+        with self.assertLogs("blog",level="INFO") as captured:
+            failed_login=self.client.post("/api/admin/login",json={"username":"missing-user","password":"never-log-this-secret"},headers={"X-Request-ID":"audit-trace-1"})
+        self.assertEqual(failed_login.status_code,401)
+        self.assertEqual(failed_login.headers["X-Request-ID"],"audit-trace-1")
+        log_line=next(line for line in captured.output if '"event":"http_request"' in line)
+        log_record=json.loads(log_line[log_line.index("{"):])
+        self.assertEqual(log_record["request_id"],"audit-trace-1")
+        self.assertNotIn("never-log-this-secret","\n".join(captured.output))
+
+        with SessionLocal() as db:
+            successful_login=db.scalar(select(AuditLog).where(AuditLog.action=="POST /api/admin/login",AuditLog.status==1).order_by(AuditLog.id.desc()))
+            self.assertEqual((successful_login.operator_id,successful_login.role,successful_login.target_type,successful_login.target_id),(login["user"]["id"],3,"account",login["user"]["id"]))
+            failed=db.scalar(select(AuditLog).where(AuditLog.action=="POST /api/admin/login").order_by(AuditLog.id.desc()))
+            self.assertEqual((failed.operator_id,failed.role,failed.target_type,failed.status),(0,0,"account",0))
+            self.assertEqual(failed.target_id,0)
+            self.assertIn("HTTP 401",failed.detail)
+
+        invalid=self.client.post("/api/admin/links",headers=admin,json={"name":"bad","url":"javascript:alert(1)"})
+        self.assertEqual(invalid.status_code,422)
+        created=self.client.post("/api/admin/links",headers=admin,json={"name":"Audited","url":"https://example.test/audit","enabled":True})
+        self.assertEqual(created.status_code,201,created.text)
+        link_id=created.json()["data"]["id"]
+        self.assertEqual(self.client.delete("/api/admin/links/987654321",headers=admin).status_code,404)
+        with SessionLocal() as db:
+            success=db.scalar(select(AuditLog).where(AuditLog.action=="POST /api/admin/links").order_by(AuditLog.id.desc()))
+            self.assertEqual((success.operator_id,success.username,success.role,success.target_type,success.target_id,success.status),(login["user"]["id"],"admin",3,"links",link_id,1))
+            invalid_log=db.scalar(select(AuditLog).where(AuditLog.path=="/api/admin/links",AuditLog.status==0).order_by(AuditLog.id.desc()))
+            self.assertEqual((invalid_log.operator_id,invalid_log.target_type,invalid_log.target_id),(login["user"]["id"],"links",0))
+
+        filtered=self.client.get("/api/admin/audit-logs",headers=admin,params={"action":"POST /api/admin/links","status":1,"operatorId":login["user"]["id"],"page":1,"pageSize":5})
+        self.assertEqual(filtered.status_code,200,filtered.text)
+        self.assertTrue(filtered.json()["data"]["list"])
+        self.assertTrue(all(row["targetType"]=="links" and row["roleName"]=="管理员" for row in filtered.json()["data"]["list"]))
+        for params in ({"page":0},{"pageSize":101},{"status":2}):
+            self.assertEqual(self.client.get("/api/admin/audit-logs",headers=admin,params=params).status_code,422)
+
+        suffix=__import__("uuid").uuid4().hex[:8]
+        def concurrent_create(index):
+            return self.client.post("/api/admin/links",headers=admin,json={"name":f"Concurrent {suffix} {index}","url":f"https://example.test/{suffix}/{index}","enabled":True})
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            concurrent=list(pool.map(concurrent_create,range(4)))
+        self.assertTrue(all(response.status_code==201 for response in concurrent))
+        concurrent_ids={response.json()["data"]["id"] for response in concurrent}
+        with SessionLocal() as db:
+            events=db.scalars(select(AuditLog).where(AuditLog.target_type=="links",AuditLog.target_id.in_(concurrent_ids))).all()
+            self.assertEqual({event.target_id for event in events},concurrent_ids)
+            self.assertTrue(all(event.status==1 for event in events))
+
+        from fastapi.responses import JSONResponse
+        from unittest.mock import AsyncMock, patch
+        with patch("app.main.enforce_rate_limit",new=AsyncMock(return_value=JSONResponse(status_code=429,content={"code":429,"message":"limited","data":None},headers={"Retry-After":"60"}))):
+            with self.assertLogs("blog",level="INFO") as captured:
+                limited=self.client.post("/api/admin/links",headers={**admin,"X-Request-ID":"trace-limited-1"},json={"name":"Should not persist","url":"https://example.test/limited"})
+        self.assertEqual(limited.status_code,429)
+        self.assertEqual(limited.headers["X-Request-ID"],"trace-limited-1")
+        self.assertEqual(limited.headers["Retry-After"],"60")
+        log_line=next(line for line in captured.output if '"event":"http_request"' in line)
+        limited_log=json.loads(log_line[log_line.index("{"):])
+        self.assertEqual((limited_log["request_id"],limited_log["status_code"]),("trace-limited-1",429))
+
+        registered=self.client.post("/api/auth/register",json={"username":"audit_viewer","email":"audit_viewer@example.test","password":"password123"}).json()["data"]
+        viewer={"Authorization":"Bearer "+registered["accessToken"]}
+        self.assertEqual(self.client.delete("/api/admin/audit-logs",headers=viewer).status_code,403)
+        with SessionLocal() as db:
+            denied=db.scalar(select(AuditLog).where(AuditLog.path=="/api/admin/audit-logs",AuditLog.status==0).order_by(AuditLog.id.desc()))
+            self.assertEqual((denied.operator_id,denied.role,denied.status),(registered["user"]["id"],1,0))
+        self.assertEqual(self.client.delete("/api/admin/audit-logs",headers=admin).status_code,200)
+        with SessionLocal() as db:
+            remaining=db.scalars(select(AuditLog)).all()
+            self.assertEqual(len(remaining),1)
+            self.assertEqual((remaining[0].action,remaining[0].status,remaining[0].operator_id),("DELETE /api/admin/audit-logs",1,login["user"]["id"]))
+
+    def test_health_and_readiness_component_results(self):
+        from unittest.mock import patch
+        from app.main import engine
+
+        self.assertEqual(self.client.get("/health").json(),{"status":"ok"})
+        with patch("redis.Redis.from_url") as redis_client:
+            redis_client.return_value.ping.return_value=True
+            ready=self.client.get("/ready")
+            self.assertEqual(ready.status_code,200)
+            self.assertEqual(ready.json(),{"status":"ready","components":{"database":"ok","redis":"ok"}})
+            with patch.object(engine,"connect",side_effect=RuntimeError("database unavailable")):
+                unavailable=self.client.get("/ready")
+            self.assertEqual(unavailable.status_code,503)
+            self.assertEqual(unavailable.json()["components"],{"database":"unavailable","redis":"ok"})
+            redis_client.return_value.ping.side_effect=RuntimeError("redis unavailable")
+            unavailable=self.client.get("/ready")
+            self.assertEqual(unavailable.status_code,503)
+            self.assertEqual(unavailable.json()["components"],{"database":"ok","redis":"unavailable"})
+
+    def test_audit_and_business_database_failures_are_reported_separately(self):
+        from unittest.mock import patch
+        from sqlalchemy import select
+        from app.api.deps import get_db
+        from app.db.session import SessionLocal
+        from app.models import AuditLog, Link
+
+        login=self.client.post("/api/admin/login",json={"username":"admin","password":"123456"}).json()["data"]
+        headers={"Authorization":"Bearer "+login["accessToken"]}
+        payload={"name":"Audit failure probe","url":"https://example.test/audit-failure","enabled":True}
+
+        def failed_db_dependency():
+            with SessionLocal() as db:
+                def fail_commit(): raise RuntimeError("simulated database commit failure")
+                db.commit=fail_commit
+                yield db
+
+        self.app.dependency_overrides[get_db]=failed_db_dependency
+        try:
+            rolled_back=self.client.post("/api/admin/links",headers={**headers,"X-Request-ID":"trace-db-failure"},json={**payload,"name":"Rollback probe"})
+        finally:
+            self.app.dependency_overrides.pop(get_db,None)
+        self.assertEqual(rolled_back.status_code,500)
+        self.assertEqual(rolled_back.headers["X-Request-ID"],"trace-db-failure")
+        with SessionLocal() as db:
+            self.assertIsNone(db.scalar(select(Link).where(Link.name=="Rollback probe")))
+            rollback_event=db.scalar(select(AuditLog).where(AuditLog.path=="/api/admin/links").order_by(AuditLog.id.desc()))
+            self.assertEqual((rollback_event.status,rollback_event.target_type), (0,"links"))
+
+        with patch("app.main.SessionLocal",side_effect=RuntimeError("simulated audit store failure")):
+            with self.assertLogs("blog",level="ERROR") as captured:
+                persisted=self.client.post("/api/admin/links",headers=headers,json=payload)
+        self.assertEqual(persisted.status_code,201,persisted.text)
+        self.assertTrue(any("audit_write_failed" in line for line in captured.output))
+        with SessionLocal() as db:
+            self.assertIsNotNone(db.scalar(select(Link).where(Link.name=="Audit failure probe")))
 
     def test_article_like_toggle_and_concurrent_requests(self):
         from sqlalchemy import func, select
