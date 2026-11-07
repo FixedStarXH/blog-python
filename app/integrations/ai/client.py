@@ -12,14 +12,28 @@ class EmbeddingUnsupported(DomainError):
         super().__init__("Embedding is explicitly unsupported by the provider", 503)
 
 
+def _provider_http_error(status_code: int) -> DomainError:
+    if status_code in {401, 403}:
+        return DomainError("AI 服务认证失败，请检查服务端凭据", 502)
+    if status_code == 429:
+        return DomainError("AI 服务繁忙或额度受限，请稍后重试", 503)
+    if status_code >= 500:
+        return DomainError("AI 服务暂时不可用", 502)
+    return DomainError(f"AI 服务拒绝了请求（上游 HTTP {status_code}）", 502)
+
+
 async def request_json(base: str, key: str, path: str, payload: dict):
     if not base or not key:
         raise DomainError("AI provider is not configured", 503)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0)) as client:
+        timeout=httpx.Timeout(settings.ai_timeout_seconds,connect=settings.ai_connect_timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response=await client.post(base.rstrip("/")+path,headers={"Authorization":f"Bearer {key}"},json=payload)
         response.raise_for_status()
-        return response.json()
+        try:
+            return response.json()
+        except (ValueError, TypeError) as exc:
+            raise DomainError("AI 服务返回了无效 JSON", 502) from exc
     except httpx.HTTPStatusError as exc:
         if path == "/embeddings":
             try:
@@ -30,9 +44,11 @@ async def request_json(base: str, key: str, path: str, payload: dict):
                     raise EmbeddingUnsupported() from exc
             except (ValueError, AttributeError, TypeError):
                 pass
-        raise DomainError(f"AI provider returned HTTP {exc.response.status_code}", 502) from exc
+        raise _provider_http_error(exc.response.status_code) from exc
+    except httpx.TimeoutException as exc:
+        raise DomainError("AI 服务响应超时，请稍后重试", 504) from exc
     except httpx.HTTPError as exc:
-        raise DomainError("AI provider unavailable", 502) from exc
+        raise DomainError("AI 服务连接失败，请稍后重试", 502) from exc
 
 
 async def chat(messages: list[dict], stream: bool=False):
@@ -42,31 +58,56 @@ async def chat(messages: list[dict], stream: bool=False):
 async def open_chat_stream(messages: list[dict]):
     if not settings.chat_base_url or not settings.chat_api_key:
         raise DomainError("AI provider is not configured",503)
-    client=httpx.AsyncClient(timeout=httpx.Timeout(90.0,connect=10.0))
-    request=client.build_request("POST",settings.chat_base_url.rstrip("/")+"/chat/completions",headers={"Authorization":f"Bearer {settings.chat_api_key}","Accept":"text/event-stream"},json={"model":settings.chat_model,"messages":messages,"stream":True})
+    client=httpx.AsyncClient(timeout=httpx.Timeout(settings.ai_timeout_seconds,connect=settings.ai_connect_timeout_seconds))
     try:
+        request=client.build_request("POST",settings.chat_base_url.rstrip("/")+"/chat/completions",headers={"Authorization":f"Bearer {settings.chat_api_key}","Accept":"text/event-stream"},json={"model":settings.chat_model,"messages":messages,"stream":True})
         response=await client.send(request,stream=True)
         response.raise_for_status()
+    except ValueError as exc:
+        await client.aclose()
+        raise DomainError("AI 服务地址或请求配置无效",502) from exc
     except httpx.HTTPStatusError as exc:
         await client.aclose()
-        raise DomainError(f"AI provider returned HTTP {exc.response.status_code}",502) from exc
+        raise _provider_http_error(exc.response.status_code) from exc
+    except httpx.TimeoutException as exc:
+        await client.aclose()
+        raise DomainError("AI 服务响应超时，请稍后重试",504) from exc
     except httpx.HTTPError as exc:
         await client.aclose()
-        raise DomainError("AI provider unavailable",502) from exc
+        raise DomainError("AI 服务连接失败，请稍后重试",502) from exc
 
     async def events():
+        completed=False
         try:
             async for line in response.aiter_lines():
                 if not line.startswith("data:"): continue
                 data=line[5:].strip()
                 if data=="[DONE]":
+                    completed=True
                     yield "data: [DONE]\n\n"
                     return
                 try: payload=json.loads(data)
                 except json.JSONDecodeError: continue
-                delta=payload.get("choices",[{}])[0].get("delta",{}).get("content")
-                if delta: yield "data: "+json.dumps({"delta":delta},ensure_ascii=False)+"\n\n"
-            yield "data: [DONE]\n\n"
+                if not isinstance(payload,dict):
+                    continue
+                if payload.get("error"):
+                    yield "data: "+json.dumps({"error":{"message":"AI 上游生成失败，请稍后重试"}},ensure_ascii=False)+"\n\n"
+                    return
+                choices=payload.get("choices")
+                if not isinstance(choices,list) or not choices or not isinstance(choices[0],dict):
+                    continue
+                delta_block=choices[0].get("delta",{})
+                if not isinstance(delta_block,dict):
+                    continue
+                delta=delta_block.get("content")
+                if isinstance(delta,str) and delta:
+                    yield "data: "+json.dumps({"delta":delta},ensure_ascii=False)+"\n\n"
+            if not completed:
+                yield "data: "+json.dumps({"error":{"message":"AI 上游连接中断，当前回答可能不完整"}},ensure_ascii=False)+"\n\n"
+        except httpx.TimeoutException:
+            yield "data: "+json.dumps({"error":{"message":"AI 服务响应超时，当前回答可能不完整"}},ensure_ascii=False)+"\n\n"
+        except httpx.HTTPError:
+            yield "data: "+json.dumps({"error":{"message":"AI 上游连接中断，当前回答可能不完整"}},ensure_ascii=False)+"\n\n"
         finally:
             await response.aclose(); await client.aclose()
     return events()

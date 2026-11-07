@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +21,10 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = ""
     embedding_dimension: int = 0
+    ai_minute_limit: int = Field(default=10, ge=1, le=600)
+    ai_daily_limit: int = Field(default=100, ge=1, le=100000)
+    ai_timeout_seconds: float = Field(default=90.0, gt=0, le=600)
+    ai_connect_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
     seed_password: str = "123456"
     seed_username: str = "admin"
     seed_email: str = "admin@example.com"

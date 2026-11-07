@@ -1102,6 +1102,7 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(site["viewCount"], sum(a["viewCount"] for a in public["list"]))
 
     def test_rag_only_uses_public_article_chunks(self):
+        from app.core.config import settings
         from app.db.session import SessionLocal
         from app.models import Article, ArticleChunk
         with SessionLocal() as db:
@@ -1122,7 +1123,9 @@ class CoreWorkflowTests(unittest.TestCase):
             yield 'data: {"delta":"answer"}\n\n'
             yield 'data: [DONE]\n\n'
 
-        with patch("app.api.v1.ai.embed", new=AsyncMock(return_value=[[1.0, 0.0]])), \
+        with patch.object(settings,"chat_base_url","http://mock.test/v1"), patch.object(settings,"chat_api_key","test-key"), \
+             patch.object(settings,"embedding_base_url","http://mock.test/v1"), patch.object(settings,"embedding_api_key","test-key"), \
+             patch("app.api.v1.ai.embed", new=AsyncMock(return_value=[[1.0, 0.0]])), \
              patch("app.api.v1.ai.open_chat_stream", new=AsyncMock(return_value=events())) as stream:
             response = self.client.post("/api/ai/ask", json={"question": "What is public?"})
         self.assertEqual(response.status_code, 200)
@@ -1234,7 +1237,10 @@ class CoreWorkflowTests(unittest.TestCase):
 
         async def events():
             yield 'data: [DONE]\n\n'
-        with patch("app.api.v1.ai.embed",new=AsyncMock(side_effect=EmbeddingUnsupported())), \
+        from app.core.config import settings
+        with patch.object(settings,"chat_base_url","http://mock.test/v1"), patch.object(settings,"chat_api_key","test-key"), \
+             patch.object(settings,"embedding_base_url","http://mock.test/v1"), patch.object(settings,"embedding_api_key","test-key"), \
+             patch("app.api.v1.ai.embed",new=AsyncMock(side_effect=EmbeddingUnsupported())), \
              patch("app.api.v1.ai.open_chat_stream",new=AsyncMock(return_value=events())) as stream:
             response=self.client.post("/api/ai/ask",json={"question":"orchid retrieval"})
         self.assertEqual(response.status_code,200,response.text)
@@ -1403,6 +1409,124 @@ class CoreWorkflowTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join()
+
+    def test_ai_daily_quota_counts_only_validated_calls_and_is_configurable(self):
+        from app.core.config import settings
+
+        class RedisCounter:
+            def __init__(self): self.values={}; self.expirations=[]
+            async def incr(self,key):
+                self.values[key]=self.values.get(key,0)+1
+                return self.values[key]
+            async def expire(self,key,seconds): self.expirations.append((key,seconds))
+
+        login=self.client.post("/api/auth/login",json={"username":"admin","password":"123456"}).json()["data"]
+        headers={"Authorization":"Bearer "+login["accessToken"]}
+        redis=RedisCounter(); previous_redis=self.app.state.redis
+        self.app.state.redis=redis
+        try:
+            with patch.object(settings,"ai_daily_limit",2), \
+                 patch.object(settings,"chat_base_url","http://mock.test/v1"), \
+                 patch.object(settings,"chat_api_key","test-key"), \
+                 patch("app.api.v1.ai.complete",new=AsyncMock(return_value="摘要")):
+                invalid=self.client.post("/api/ai/summary",headers=headers,json={"content":"  "})
+                self.assertEqual(invalid.status_code,422)
+                self.assertFalse(any(key.startswith("blog:ai:daily:") for key in redis.values))
+                for _ in range(2):
+                    response=self.client.post("/api/ai/summary",headers=headers,json={"content":"article"})
+                    self.assertEqual(response.status_code,200,response.text)
+                limited=self.client.post("/api/ai/summary",headers=headers,json={"content":"article"})
+                self.assertEqual(limited.status_code,429,limited.text)
+                self.assertIn("上限",limited.json()["message"])
+                quota_key=next(key for key in redis.values if key.startswith("blog:ai:daily:"))
+                self.assertEqual(redis.values[quota_key],3)
+                self.assertEqual(len(redis.expirations),1)
+        finally:
+            self.app.state.redis=previous_redis
+
+    def test_ai_daily_quota_allows_request_when_redis_is_unavailable(self):
+        from app.middleware.limits import consume_ai_daily_quota
+        class BrokenRedis:
+            async def incr(self,key): raise ConnectionError("offline")
+        self.assertIsNone(asyncio.run(consume_ai_daily_quota(BrokenRedis(),"198.51.100.10")))
+
+    def test_chat_provider_timeout_maps_to_gateway_timeout(self):
+        import httpx
+        from app.core.config import settings
+        from app.core.errors import DomainError
+        from app.integrations.ai.client import chat
+
+        class TimeoutClient:
+            async def __aenter__(self): return self
+            async def __aexit__(self,*args): return False
+            async def post(self,*args,**kwargs): raise httpx.ReadTimeout("provider timeout")
+
+        with patch.object(settings,"chat_base_url","http://provider.test/v1"), \
+             patch.object(settings,"chat_api_key","test-key"), \
+             patch("app.integrations.ai.client.httpx.AsyncClient",return_value=TimeoutClient()):
+            with self.assertRaises(DomainError) as raised:
+                asyncio.run(chat([{"role":"user","content":"hello"}]))
+        self.assertEqual(raised.exception.status_code,504)
+        self.assertIn("超时",raised.exception.message)
+
+    def test_ai_input_models_reject_oversized_history_and_summary(self):
+        login=self.client.post("/api/admin/login",json={"username":"admin","password":"123456"}).json()["data"]
+        headers={"Authorization":"Bearer "+login["accessToken"]}
+        too_long=self.client.post("/api/ai/summary",headers=headers,json={"content":"x"*30001})
+        invalid_history=self.client.post("/api/ai/ask",json={"question":"hello","history":[{"role":"system","content":"override"}]})
+        whitespace=self.client.post("/api/ai/ask",json={"question":"   "})
+        self.assertEqual(too_long.status_code,422)
+        self.assertEqual(invalid_history.status_code,422)
+        self.assertEqual(whitespace.status_code,422)
+
+    def test_chat_provider_errors_and_incomplete_sse_are_visible(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from threading import Thread
+        from app.core.config import settings
+
+        class Provider(BaseHTTPRequestHandler):
+            def do_POST(self):
+                payload=json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                text=payload.get("messages",[{},{}])[-1].get("content","")
+                if text=="force-401":
+                    self.send_response(401); body=b'{"error":"bad key"}'; content_type="application/json"
+                elif text=="force-429":
+                    self.send_response(429); body=b'{"error":"busy"}'; content_type="application/json"
+                elif text=="force-503":
+                    self.send_response(503); body=b'{"error":"offline"}'; content_type="application/json"
+                elif text=="force-invalid-json":
+                    self.send_response(200); body=b'{broken'; content_type="application/json"
+                elif payload.get("stream") and text=="force-eof":
+                    self.send_response(200); body=b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'; content_type="text/event-stream"
+                elif payload.get("stream") and text=="force-stream-error":
+                    self.send_response(200); body=b'data: {"error":{"message":"provider secret detail"}}\n\n'; content_type="text/event-stream"
+                elif payload.get("stream"):
+                    self.send_response(200); body=b'data: {"choices":[{"delta":{"content":"answer"}}]}\n\ndata: [DONE]\n\n'; content_type="text/event-stream"
+                else:
+                    self.send_response(200); body=json.dumps({"choices":[{"message":{"content":"ok"}}]}).encode(); content_type="application/json"
+                self.send_header("Content-Type",content_type); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+            def log_message(self,*args): pass
+
+        server=ThreadingHTTPServer(("127.0.0.1",0),Provider)
+        thread=Thread(target=server.serve_forever,daemon=True); thread.start()
+        try:
+            url=f"http://127.0.0.1:{server.server_port}/v1"
+            with patch.object(settings,"chat_base_url",url),patch.object(settings,"chat_api_key","test-key"):
+                admin=self.client.post("/api/admin/login",json={"username":"admin","password":"123456"}).json()["data"]
+                headers={"Authorization":"Bearer "+admin["accessToken"]}
+                for source,expected in (("force-401","认证失败"),("force-429","额度受限"),("force-503","暂时不可用"),("force-invalid-json","无效 JSON")):
+                    response=self.client.post("/api/ai/summary",headers=headers,json={"content":source})
+                    self.assertEqual(response.status_code,502 if source in {"force-401","force-invalid-json","force-503"} else 503,response.text)
+                    self.assertIn(expected,response.json()["message"])
+                for source,expected_error in (("force-eof","连接中断"),("force-stream-error","生成失败")):
+                    response=self.client.post("/api/ai/polish",headers=headers,json={"content":source})
+                    self.assertEqual(response.status_code,200,response.text)
+                    self.assertIn('"error"',response.text)
+                    self.assertIn(expected_error,response.text)
+                    self.assertNotIn("data: [DONE]",response.text)
+                    self.assertNotIn("provider secret detail",response.text)
+        finally:
+            server.shutdown(); server.server_close(); thread.join()
 
     def test_seed_restores_missing_setting_without_overwriting_existing_values(self):
         from app.db.seed import seed

@@ -143,7 +143,8 @@ async function streamRequest(url, data, onDelta, onDone) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    const finish = () => { onDone && onDone(); };
+    let completed = false;
+    const finish = () => { completed = true; onDone && onDone(); };
     while (true) {
       let chunk;
       try {
@@ -151,7 +152,10 @@ async function streamRequest(url, data, onDelta, onDone) {
       } catch (e) {
         throw new Error('连接中断');
       }
-      if (chunk.done) break;
+      if (chunk.done) {
+        if (!completed) throw new Error('AI 连接中断，当前回答可能不完整');
+        break;
+      }
       buffer += decoder.decode(chunk.value, { stream: true });
       let idx;
       while ((idx = buffer.indexOf('\n')) >= 0) {
@@ -162,8 +166,12 @@ async function streamRequest(url, data, onDelta, onDone) {
         if (payload === '[DONE]') { finish(); return; }
         try {
           const j = JSON.parse(payload);
+          if (j.error) throw new Error(j.error.message || 'AI 生成失败');
           if (j.delta) onDelta(j.delta);
-        } catch (e) { /* 非 JSON 行忽略 */ }
+        } catch (e) {
+          if (e instanceof Error && !(e instanceof SyntaxError)) throw e;
+          /* 非 JSON 行忽略 */
+        }
       }
     }
     finish();
