@@ -624,6 +624,7 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertIn(expected_link, client.get("/api/rss.xml").text)
         self.assertIn(expected_link, client.get("/sitemap.xml").text)
         self.assertEqual(client.put("/api/admin/settings", headers=admin_headers, json={"quotes": [{"content": "Test quote", "author": "Author"}]}).status_code, 200)
+        self.assertEqual(client.get("/api/quote").json()["data"], "Test quote | Author")
         self.assertEqual(client.get("/api/quote/random").json()["data"], {"content": "Test quote", "author": "Author"})
 
     def test_operations_settings_links_dashboard_and_feeds_contracts(self):

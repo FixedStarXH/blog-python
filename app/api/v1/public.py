@@ -47,14 +47,23 @@ def site_info(db: Session = Depends(get_db)):
     return envelope(settings_data)
 
 
-@router.get("/quote")
-@router.get("/quote/random")
-def quote(db: Session = Depends(get_db)):
+def _quote_lines(db: Session) -> list[str]:
     item = db.get(SiteSetting,"daily_quotes")
     line=item.value if item and item.value else "把每一个今天都当作新的开始。|佚名"
+    return [x.strip() for x in line.splitlines() if x.strip()] or [line]
+
+
+@router.get("/quote")
+def daily_quote(db: Session = Depends(get_db)):
+    # Legacy Go contract: data is the selected raw quote string.
     import random
-    choices=[x.strip() for x in line.splitlines() if x.strip()]
-    selected=random.choice(choices or [line]); parts=selected.split("|",1)
+    return envelope(random.choice(_quote_lines(db)))
+
+
+@router.get("/quote/random")
+def quote(db: Session = Depends(get_db)):
+    import random
+    selected=random.choice(_quote_lines(db)); parts=selected.split("|",1)
     return envelope({"content":parts[0].strip(),"author":parts[1].strip() if len(parts)>1 and parts[1].strip() else "佚名"})
 
 
