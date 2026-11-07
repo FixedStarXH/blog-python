@@ -47,10 +47,10 @@
       <form onsubmit="save(event)">
         <input type="hidden" id="l-id">
         <div class="form-grid">
-          <div class="field"><label>站点名</label><input type="text" id="l-name" required maxlength="100"></div>
+          <div class="field"><label>站点名</label><input type="text" id="l-name" required maxlength="50"></div>
           <div class="field"><label>URL</label><input type="url" id="l-url" required maxlength="255"
               placeholder="https://…"></div>
-          <div class="field full"><label>描述</label><input type="text" id="l-desc" maxlength="255"></div>
+          <div class="field full"><label>描述</label><input type="text" id="l-desc" maxlength="200"></div>
           <div class="field"><label>排序</label><input type="number" id="l-sort" value="0"></div>
           <div class="field check" style="align-self:end;padding-bottom:12px;">
             <input type="checkbox" id="l-enabled" checked>

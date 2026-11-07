@@ -31,7 +31,8 @@ def archives(db: Session = Depends(get_db)):
 
 @router.get("/settings")
 def public_settings(db: Session = Depends(get_db)):
-    values = {x.key:x.value for x in db.scalars(select(SiteSetting)).all() if not any(w in x.key.lower() for w in ("secret","password","api_key","apikey"))}
+    public_keys={"site_title","site_subtitle","site_description","site_logo","site_beian","social_github","social_email"}
+    values = {x.key:x.value for x in db.scalars(select(SiteSetting)).all() if x.key in public_keys}
     return envelope(values)
 
 
@@ -70,10 +71,12 @@ def sensitive_words():
 
 @router.get("/rss.xml")
 def rss(db: Session = Depends(get_db)):
-    rows=db.scalars(public_query(db).order_by(Article.publish_at.desc()).limit(30)).all()
+    rows=db.scalars(public_query(db).order_by(Article.publish_at.desc(),Article.id.desc()).limit(20)).all()
     base=_xml(settings.public_url.rstrip("/"))
-    items="".join(f"<item><title>{_xml(a.title)}</title><link>{base}/article.html?id={a.id}</link><description>{_xml(a.summary)}</description></item>" for a in rows)
-    xml=f'<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Blog</title><link>{base}</link>{items}</channel></rss>'
+    items="".join(f"<item><title>{_xml(a.title)}</title><link>{base}/article.html?id={a.id}</link><guid isPermaLink=\"true\">{base}/article.html?id={a.id}</guid><description>{_xml(a.summary)}</description><pubDate>{(a.publish_at or a.created_at).strftime('%a, %d %b %Y %H:%M:%S +0000')}</pubDate></item>" for a in rows)
+    site_title=db.get(SiteSetting,"site_title")
+    title=_xml(site_title.value if site_title and site_title.value else "Blog")
+    xml=f'<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>{title}</title><link>{base}</link><description>{title}</description>{items}</channel></rss>'
     return Response(xml,media_type="application/rss+xml; charset=utf-8")
 
 
@@ -84,9 +87,9 @@ def feed(db: Session = Depends(get_db)):
 
 @router.get("/sitemap.xml")
 def sitemap(db: Session = Depends(get_db)):
-    rows=db.scalars(public_query(db).order_by(Article.publish_at.desc())).all()
+    rows=db.scalars(public_query(db).order_by(Article.publish_at.desc(),Article.id.desc())).all()
     base=_xml(settings.public_url.rstrip("/"))
-    urls="".join(f"<url><loc>{base}/article.html?id={a.id}</loc></url>" for a in rows)
+    urls=f"<url><loc>{base}</loc><lastmod>{datetime.utcnow().date().isoformat()}</lastmod></url>"+"".join(f"<url><loc>{base}/article.html?id={a.id}</loc><lastmod>{(a.updated_at or a.created_at).date().isoformat()}</lastmod></url>" for a in rows)
     return Response(f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>',media_type="application/xml; charset=utf-8")
 
 

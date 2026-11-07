@@ -9,6 +9,51 @@ import uuid
     "disposable browser test environment not configured",
 )
 class BrowserWorkflowTests(unittest.TestCase):
+    def test_admin_site_operations_pages(self):
+        from playwright.sync_api import sync_playwright, expect
+
+        base = os.environ["BLOG_BROWSER_BASE_URL"].rstrip("/")
+        suffix = uuid.uuid4().hex[:8]
+        link_name = "Ops " + suffix
+        with sync_playwright() as playwright:
+            executable = os.environ.get("BLOG_BROWSER_EXECUTABLE")
+            browser = playwright.chromium.launch(headless=True, **({"executable_path": executable} if executable else {}))
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.on("dialog", lambda dialog: dialog.accept())
+            page.goto(base + "/admin/login.html")
+            page.locator("#username").fill(os.environ["BLOG_BROWSER_ADMIN_USER"])
+            page.locator("#password").fill(os.environ["BLOG_BROWSER_ADMIN_PASSWORD"])
+            page.locator("button[type=submit]").click()
+            page.wait_for_url("**/admin/dashboard.html")
+            expect(page.locator("#stats")).to_contain_text("用户总数")
+
+            page.goto(base + "/admin/settings.html")
+            page.locator("#s-site_title").fill("Browser Ops " + suffix)
+            page.get_by_role("button", name="保存全部设置").click()
+            expect(page.get_by_text("设置已保存")).to_be_visible()
+            public_site = page.request.get(base + "/api/site").json()["data"]
+            self.assertEqual(public_site["title"], "Browser Ops " + suffix)
+
+            page.goto(base + "/admin/links.html")
+            page.get_by_role("button", name="+ 添加链接").click()
+            page.locator("#l-name").fill(link_name)
+            page.locator("#l-url").fill("https://example.test/" + suffix)
+            page.locator("#l-desc").fill("Temporary browser check")
+            page.locator("#form-modal button[type=submit]").click()
+            row = page.locator("#tbody tr").filter(has_text=link_name)
+            expect(row).to_be_visible()
+            public_links = page.request.get(base + "/api/links").json()["data"]
+            self.assertTrue(any(item["name"] == link_name for item in public_links))
+            row.get_by_role("button", name="编辑").click()
+            page.locator("#l-enabled").uncheck()
+            page.locator("#form-modal button[type=submit]").click()
+            expect(row).to_contain_text("停用")
+            public_links = page.request.get(base + "/api/links").json()["data"]
+            self.assertFalse(any(item["name"] == link_name for item in public_links))
+            row.get_by_role("button", name="删除").click()
+            expect(page.locator("#tbody")).not_to_contain_text(link_name)
+            browser.close()
+
     def test_admin_image_gallery_upload_and_delete(self):
         from io import BytesIO
         from PIL import Image as PILImage

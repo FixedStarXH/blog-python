@@ -211,6 +211,7 @@
         const c = d.counts || {};
         document.getElementById('stats').innerHTML = `
       <div class="stat-card"><div class="num red">${c.articles ?? '-'}</div><div class="lbl">文章总数</div></div>
+      <div class="stat-card"><div class="num">${c.users ?? '-'}</div><div class="lbl">用户总数</div></div>
       <div class="stat-card"><div class="num">${c.views ?? '-'}</div><div class="lbl">总浏览量</div></div>
       <div class="stat-card"><div class="num green">${c.comments ?? '-'}</div><div class="lbl">评论总数</div></div>
       <div class="stat-card"><div class="num orange">${c.pendingComments ?? '-'}</div><div class="lbl">待审核评论</div></div>`;

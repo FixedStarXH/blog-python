@@ -620,6 +620,56 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(client.put("/api/admin/settings", headers=admin_headers, json={"quotes": [{"content": "Test quote", "author": "Author"}]}).status_code, 200)
         self.assertEqual(client.get("/api/quote/random").json()["data"], {"content": "Test quote", "author": "Author"})
 
+    def test_operations_settings_links_dashboard_and_feeds_contracts(self):
+        import xml.etree.ElementTree as ET
+        from app.db.session import SessionLocal
+        from app.models import SiteSetting
+
+        admin_data=self.client.post("/api/admin/login",json={"username":"admin","password":"123456"}).json()["data"]
+        headers={"Authorization":"Bearer "+admin_data["accessToken"]}
+        with SessionLocal() as db:
+            db.add_all([SiteSetting(key="internal_feature_flag",value="do-not-publish"),SiteSetting(key="provider_secret",value="private")])
+            db.commit()
+
+        public=self.client.get("/api/settings").json()["data"]
+        self.assertNotIn("internal_feature_flag",public)
+        self.assertNotIn("provider_secret",public)
+        admin_settings=self.client.get("/api/admin/settings",headers=headers).json()["data"]
+        self.assertNotIn("internal_feature_flag",admin_settings)
+        self.assertNotIn("provider_secret",admin_settings)
+        for body in ({"unknown_option":"x"},{"site_title":123},{"site_title":"x"*256},{"quotes":[{"content":""}]}):
+            self.assertEqual(self.client.put("/api/admin/settings",headers=headers,json=body).status_code,422)
+        saved=self.client.put("/api/admin/settings",headers=headers,json={"site_title":"Ops & Blog","quotes":[{"content":"A < B","author":"Writer"}]})
+        self.assertEqual(saved.status_code,200,saved.text)
+        self.assertEqual(self.client.get("/api/quote/random").json()["data"],{"content":"A < B","author":"Writer"})
+        self.assertEqual(self.client.get("/api/site").json()["data"]["title"],"Ops & Blog")
+
+        valid={"name":"Docs","url":"https://example.test/docs","description":"Documentation","sort":2,"enabled":False}
+        for invalid in ({**valid,"enabled":"false"},{**valid,"sort":"2"},{**valid,"url":"javascript:alert(1)"},{**valid,"name":" "},{**valid,"description":"x"*201}):
+            self.assertEqual(self.client.post("/api/admin/links",headers=headers,json=invalid).status_code,422)
+        created=self.client.post("/api/admin/links",headers=headers,json={**valid,"enabled":True})
+        self.assertEqual(created.status_code,201,created.text)
+        link_id=created.json()["data"]["id"]
+        self.assertTrue(any(link["id"]==link_id for link in self.client.get("/api/links").json()["data"]))
+        updated=self.client.put(f"/api/admin/links/{link_id}",headers=headers,json={**valid,"sort":-1})
+        self.assertEqual(updated.status_code,200,updated.text)
+        self.assertFalse(any(link["id"]==link_id for link in self.client.get("/api/links").json()["data"]))
+        self.assertEqual(self.client.delete(f"/api/admin/links/{link_id}",headers=headers).status_code,200)
+        self.assertEqual(self.client.put(f"/api/admin/links/{link_id}",headers=headers,json=valid).status_code,404)
+
+        dashboard=self.client.get("/api/admin/dashboard",headers=headers).json()["data"]
+        self.assertIn("users",dashboard["counts"])
+        self.assertGreaterEqual(dashboard["counts"]["users"],1)
+        trend=self.client.get("/api/admin/dashboard/views-trend?days=7",headers=headers).json()["data"]
+        self.assertEqual(len(trend),7)
+        self.assertEqual([point["date"] for point in trend],sorted(point["date"] for point in trend))
+
+        rss=ET.fromstring(self.client.get("/api/rss.xml").content)
+        sitemap=ET.fromstring(self.client.get("/sitemap.xml").content)
+        self.assertEqual(rss.tag,"rss")
+        self.assertEqual(rss.findtext("channel/title"),"Ops & Blog")
+        self.assertIsNotNone(sitemap.find("{http://www.sitemaps.org/schemas/sitemap/0.9}url"))
+
     def test_article_like_toggle_and_concurrent_requests(self):
         from sqlalchemy import func, select
         from app.db.session import SessionLocal
