@@ -111,6 +111,16 @@ def build_plan(source):
             if name in {"images", "audit_logs"} and row.get("deleted_at"):
                 skipped[f"{name}_deleted"] += 1
                 continue
+            if name in {"categories", "tags"} and not str(row.get("name") or "").strip():
+                reference_table = "articles" if name == "categories" else "article_tags"
+                reference_column = "category_id" if name == "categories" else "tag_id"
+                referenced = any(item.get(reference_column) == row["id"] for item in source[reference_table])
+                if row.get("deleted_at") and not referenced:
+                    skipped[f"{name}_empty_deleted"] += 1
+                    continue
+                raise ImportErrorWithContext(
+                    f"{name} ID {row['id']} has an empty name and is active or referenced"
+                )
             aliases = {"password_hash": "password"} if name == "users" else None
             record = copy_columns(name, row, aliases)
             for nullable_id in ("column_id", "user_id", "parent_id"):
@@ -126,8 +136,12 @@ def build_plan(source):
     plan["article_tags"] = [copy_columns("article_tags", row) for row in source["article_tags"]]
 
     metrics = {}
+    source_article_ids = {row["id"] for row in source["articles"]}
     for source_name, kind in (("article_views", "view"), ("article_likes", "like")):
         for row in source[source_name]:
+            if row["article_id"] not in source_article_ids:
+                skipped[f"{source_name}_orphan"] += 1
+                continue
             if row.get("deleted_at"):
                 skipped[f"{source_name}_deleted"] += 1
                 continue

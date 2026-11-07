@@ -46,6 +46,7 @@ class GoImportTests(unittest.TestCase):
             db.execute("INSERT INTO settings VALUES ('site_title', 'Old site')")
             db.execute("INSERT INTO article_views VALUES (1, '127.0.0.1', '2026-01-01 00:00:00', NULL)")
             db.execute("INSERT INTO article_views VALUES (1, '127.0.0.1', '2026-01-02 00:00:00', NULL)")
+            db.execute("INSERT INTO article_views VALUES (999, '127.0.0.1', '2026-01-03 00:00:00', NULL)")
             db.execute("INSERT INTO article_likes VALUES (1, '127.0.0.1', 1, '2026-01-01 00:00:00', NULL)")
             db.execute("INSERT INTO article_chunks VALUES (1, 1, 0, 'public chunk', ?, 'legacy-model', 2)", (struct.pack('<ff', 1.0, 0.5),))
             db.execute("INSERT INTO article_chunks VALUES (2, 2, 0, 'private chunk', ?, 'legacy-model', 2)", (struct.pack('<ff', 1.0, 0.5),))
@@ -64,6 +65,7 @@ class GoImportTests(unittest.TestCase):
         preview = import_database(self.source_url, self.target_url)
         self.assertFalse(preview["applied"])
         self.assertEqual(preview["skipped"]["article_views_duplicate"], 1)
+        self.assertEqual(preview["skipped"]["article_views_orphan"], 1)
         self.assertEqual(preview["skipped"]["article_chunks_nonpublic"], 1)
         with closing(sqlite3.connect(self.target_path)) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 0)
@@ -109,6 +111,19 @@ class GoImportTests(unittest.TestCase):
             import_database(self.source_url, self.target_url, apply=True)
         with closing(sqlite3.connect(self.target_path)) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 0)
+
+    def test_unreferenced_empty_deleted_taxonomy_rows_are_skipped(self):
+        from scripts.import_go import import_database
+        with closing(sqlite3.connect(self.source_path)) as db:
+            db.execute("ALTER TABLE categories ADD COLUMN deleted_at DATETIME")
+            db.execute("ALTER TABLE tags ADD COLUMN deleted_at DATETIME")
+            db.execute("INSERT INTO categories VALUES (2, '', '2026-01-01 00:00:00')")
+            db.execute("INSERT INTO tags VALUES (2, '', '2026-01-01 00:00:00')")
+            db.commit()
+        preview = import_database(self.source_url, self.target_url)
+        self.assertEqual(preview["skipped"]["categories_empty_deleted"], 1)
+        self.assertEqual(preview["skipped"]["tags_empty_deleted"], 1)
+        self.assertFalse(preview["applied"])
 
     def test_outdated_destination_is_rejected(self):
         from scripts.import_go import ImportErrorWithContext, import_database
