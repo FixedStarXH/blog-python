@@ -1125,8 +1125,8 @@ class CoreWorkflowTests(unittest.TestCase):
 
         with patch.object(settings,"chat_base_url","http://mock.test/v1"), patch.object(settings,"chat_api_key","test-key"), \
              patch.object(settings,"embedding_base_url","http://mock.test/v1"), patch.object(settings,"embedding_api_key","test-key"), \
-             patch("app.api.v1.ai.embed", new=AsyncMock(return_value=[[1.0, 0.0]])), \
-             patch("app.api.v1.ai.open_chat_stream", new=AsyncMock(return_value=events())) as stream:
+             patch("app.services.ai_assistant.embed", new=AsyncMock(return_value=[[1.0, 0.0]])), \
+             patch("app.services.ai_assistant.open_chat_stream", new=AsyncMock(return_value=events())) as stream:
             response = self.client.post("/api/ai/ask", json={"question": "What is public?"})
         self.assertEqual(response.status_code, 200)
         context = stream.await_args.args[0][0]["content"]
@@ -1240,8 +1240,8 @@ class CoreWorkflowTests(unittest.TestCase):
         from app.core.config import settings
         with patch.object(settings,"chat_base_url","http://mock.test/v1"), patch.object(settings,"chat_api_key","test-key"), \
              patch.object(settings,"embedding_base_url","http://mock.test/v1"), patch.object(settings,"embedding_api_key","test-key"), \
-             patch("app.api.v1.ai.embed",new=AsyncMock(side_effect=EmbeddingUnsupported())), \
-             patch("app.api.v1.ai.open_chat_stream",new=AsyncMock(return_value=events())) as stream:
+             patch("app.services.ai_assistant.embed",new=AsyncMock(side_effect=EmbeddingUnsupported())), \
+             patch("app.services.ai_assistant.open_chat_stream",new=AsyncMock(return_value=events())) as stream:
             response=self.client.post("/api/ai/ask",json={"question":"orchid retrieval"})
         self.assertEqual(response.status_code,200,response.text)
         self.assertIn("orchid retrieval fallback marker",stream.await_args.args[0][0]["content"])
@@ -1428,7 +1428,7 @@ class CoreWorkflowTests(unittest.TestCase):
             with patch.object(settings,"ai_daily_limit",2), \
                  patch.object(settings,"chat_base_url","http://mock.test/v1"), \
                  patch.object(settings,"chat_api_key","test-key"), \
-                 patch("app.api.v1.ai.complete",new=AsyncMock(return_value="摘要")):
+                 patch("app.services.ai_assistant.complete",new=AsyncMock(return_value="摘要")):
                 invalid=self.client.post("/api/ai/summary",headers=headers,json={"content":"  "})
                 self.assertEqual(invalid.status_code,422)
                 self.assertFalse(any(key.startswith("blog:ai:daily:") for key in redis.values))
