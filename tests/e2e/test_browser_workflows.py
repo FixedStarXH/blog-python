@@ -9,6 +9,49 @@ import uuid
     "disposable browser test environment not configured",
 )
 class BrowserWorkflowTests(unittest.TestCase):
+    def test_admin_user_management_page(self):
+        from playwright.sync_api import sync_playwright, expect
+
+        base = os.environ["BLOG_BROWSER_BASE_URL"].rstrip("/")
+        suffix = uuid.uuid4().hex[:10]
+        username = "people" + suffix
+        with sync_playwright() as playwright:
+            executable = os.environ.get("BLOG_BROWSER_EXECUTABLE")
+            browser = playwright.chromium.launch(headless=True, **({"executable_path": executable} if executable else {}))
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.on("dialog", lambda dialog: dialog.accept())
+            created = page.request.post(base + "/api/auth/register", data={
+                "username": username, "email": username + "@validation.test", "password": "password123"
+            })
+            self.assertEqual(created.status, 201)
+            tokens = created.json()["data"]
+            page.goto(base + "/admin/login.html")
+            page.locator("#username").fill(os.environ["BLOG_BROWSER_ADMIN_USER"])
+            page.locator("#password").fill(os.environ["BLOG_BROWSER_ADMIN_PASSWORD"])
+            page.locator("button[type=submit]").click()
+            page.wait_for_url("**/admin/dashboard.html")
+            page.goto(base + "/admin/users.html")
+            expect(page.get_by_role("heading", name="用户管理")).to_be_visible()
+            page.locator("#keyword").fill(username)
+            page.get_by_role("button", name="搜索").click()
+            row = page.locator("#tbody tr").filter(has_text=username)
+            expect(row).to_be_visible()
+            expect(page.locator("#total")).to_contain_text("1")
+            row.locator("select[data-role]").select_option("2")
+            expect(row.locator("select[data-role]")).to_have_value("2")
+            page.locator("#role-filter").select_option("2")
+            expect(row).to_be_visible()
+            page.locator("#role-filter").select_option("")
+            row.get_by_role("button", name="禁用").click()
+            expect(row).to_contain_text("已禁用")
+            self.assertEqual(page.request.post(base + "/api/auth/refresh", data={"refreshToken": tokens["refreshToken"]}).status, 401)
+            row.get_by_role("button", name="启用").click()
+            expect(row).to_contain_text("正常")
+            self.assertEqual(page.request.post(base + "/api/auth/refresh", data={"refreshToken": tokens["refreshToken"]}).status, 401)
+            row.locator("select[data-role]").select_option("1")
+            expect(row.locator("select[data-role]")).to_have_value("1")
+            browser.close()
+
     def test_tag_filter_loads_all_pages(self):
         from urllib.parse import parse_qs, urlsplit
         from playwright.sync_api import sync_playwright, expect

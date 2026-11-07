@@ -64,6 +64,42 @@ class ComposeIntegrationTests(unittest.TestCase):
             self.request_ok("DELETE", f"/api/my/articles/{article_id}", headers=headers)
             self.assertEqual(self.client.delete(f"/api/admin/categories/{category}", headers=self.admin).status_code, 409)
 
+    def test_user_disable_and_refresh_race(self):
+        suffix = uuid.uuid4().hex[:12]
+        username = "access_" + suffix
+        credentials = {"username": username, "email": suffix + "@validation.test", "password": "password123"}
+        registered = self.request_ok("POST", "/api/auth/register", json=credentials).json()["data"]
+        user_id = registered["user"]["id"]
+        access = {"Authorization": "Bearer " + registered["accessToken"]}
+        status_path = f"/api/admin/users/{user_id}/status"
+        role_path = f"/api/admin/users/{user_id}/role"
+        self.assertEqual(self.request_ok("PUT", role_path, headers=self.admin, json={"role": 2}).json()["data"]["role"], 2)
+        self.assertEqual(self.request_ok("GET", "/api/admin/articles", headers=access).status_code, 200)
+        self.assertEqual(self.request_ok("PUT", role_path, headers=self.admin, json={"role": 1}).json()["data"]["role"], 1)
+        self.assertEqual(self.client.get("/api/admin/articles", headers=access).status_code, 403)
+
+        barrier = threading.Barrier(2, timeout=10)
+        def rotate():
+            barrier.wait()
+            return httpx.post(self.base_url + "/api/auth/refresh", json={"refreshToken": registered["refreshToken"]}, timeout=30)
+        def disable():
+            barrier.wait()
+            return httpx.put(self.base_url + status_path, headers=self.admin, json={"status": 0}, timeout=30)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            rotation = pool.submit(rotate)
+            disabling = pool.submit(disable)
+            refreshed, disabled = rotation.result(), disabling.result()
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        self.assertIn(refreshed.status_code, (200, 401))
+        self.assertEqual(self.client.get("/api/auth/me", headers=access).status_code, 401)
+        if refreshed.status_code == 200:
+            new_tokens = refreshed.json()["data"]
+            self.assertEqual(self.client.get("/api/auth/me", headers={"Authorization": "Bearer " + new_tokens["accessToken"]}).status_code, 401)
+            self.assertEqual(self.client.post("/api/auth/refresh", json={"refreshToken": new_tokens["refreshToken"]}).status_code, 401)
+        self.assertEqual(self.client.post("/api/auth/login", json={"username": username, "password": credentials["password"]}).status_code, 401)
+        self.request_ok("PUT", status_path, headers=self.admin, json={"status": 1})
+        self.assertEqual(self.client.post("/api/auth/refresh", json={"refreshToken": registered["refreshToken"]}).status_code, 401)
+
     def test_article_review_and_scheduled_publication(self):
         suffix = uuid.uuid4().hex[:12]
         category_id = self.request_ok("GET", "/api/categories").json()["data"][0]["id"]

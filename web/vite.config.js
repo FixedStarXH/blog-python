@@ -12,6 +12,7 @@ const pages = [
   'rss.html', '404.html', 'login.html', 'register.html',
   'admin/login.html', 'admin/dashboard.html', 'admin/articles.html',
   'admin/categories.html', 'admin/tags.html', 'admin/comments.html',
+  'admin/users.html',
   'admin/images.html', 'admin/links.html', 'admin/settings.html',
   'admin/audit.html',
 ]

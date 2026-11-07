@@ -98,6 +98,9 @@ def update_me(body: ProfileInput, user: User = Depends(current_user), db: Sessio
 @router.put("/auth/password")
 @router.put("/admin/password")
 def change_password(body: PasswordInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    user = db.scalar(select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True))
+    if not user or not user.status or user.deleted_at:
+        raise DomainError("account unavailable", 401)
     if not verify_password(body.old_password, user.password_hash):
         raise DomainError("old password is incorrect", 400)
     user.password_hash = hash_password(body.new_password)

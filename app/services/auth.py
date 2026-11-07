@@ -36,7 +36,7 @@ def register(db: Session, username: str, email: str, password: str) -> tuple[Use
 
 
 def login(db: Session, account: str, password: str, admin: bool = False) -> tuple[User, str, str]:
-    user = db.scalar(select(User).where(User.deleted_at.is_(None), or_(User.username == account, User.email == account)))
+    user = db.scalar(select(User).where(User.deleted_at.is_(None), or_(User.username == account, User.email == account)).with_for_update())
     if not user or not user.status:
         raise AuthError("invalid credentials", 401)
     valid, upgraded_hash = verify_and_update_password(password, user.password_hash)
@@ -65,7 +65,7 @@ def rotate_refresh(db: Session, raw_token: str) -> tuple[str, str]:
     stored = db.get(RefreshToken, token_hash(raw_token))
     if not stored or stored.revoked_at or stored.expires_at < now:
         raise AuthError("refresh token expired or revoked", 401)
-    user = db.get(User, stored.user_id)
+    user = db.scalar(select(User).where(User.id == stored.user_id).with_for_update())
     if not user or not user.status or user.deleted_at:
         db.rollback()
         raise AuthError("account unavailable", 401)
@@ -81,7 +81,11 @@ def rotate_refresh(db: Session, raw_token: str) -> tuple[str, str]:
 
 
 def revoke_refresh(db: Session, user_id: int, raw_token: str) -> None:
-    stored = db.get(RefreshToken, token_hash(raw_token))
-    if stored and stored.user_id == user_id and stored.revoked_at is None:
-        stored.revoked_at = datetime.utcnow()
-        db.commit()
+    # Lock the account before touching tokens, matching rotation and disable.
+    db.scalar(select(User.id).where(User.id == user_id).with_for_update())
+    db.execute(update(RefreshToken).where(
+        RefreshToken.token_hash == token_hash(raw_token),
+        RefreshToken.user_id == user_id,
+        RefreshToken.revoked_at.is_(None),
+    ).values(revoked_at=datetime.utcnow()))
+    db.commit()

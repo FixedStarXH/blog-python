@@ -23,16 +23,17 @@ function renderSidebar(active) {
     { key: 'categories', href: 'categories.html', i: '03', icon: '▧', name: '分类管理' },
     { key: 'tags', href: 'tags.html', i: '04', icon: '#', name: '标签管理' },
     { key: 'comments', href: 'comments.html', i: '05', icon: '✎', name: '评论管理' },
-    { key: 'images', href: 'images.html', i: '06', icon: '▨', name: '图库上传' },
-    { key: 'links', href: 'links.html', i: '07', icon: '↗', name: '友情链接' },
-    { key: 'audit', href: 'audit.html', i: '08', icon: '≡', name: '审计日志' },
-    { key: 'settings', href: 'settings.html', i: '09', icon: '⚙', name: '站点设置' },
+    { key: 'users', href: 'users.html', i: '06', icon: '◉', name: '用户管理', adminOnly: true },
+    { key: 'images', href: 'images.html', i: '07', icon: '▨', name: '图库上传' },
+    { key: 'links', href: 'links.html', i: '08', icon: '↗', name: '友情链接' },
+    { key: 'audit', href: 'audit.html', i: '09', icon: '≡', name: '审计日志' },
+    { key: 'settings', href: 'settings.html', i: '10', icon: '⚙', name: '站点设置' },
   ];
   const admin = getAdmin();
   document.getElementById('sidebar').innerHTML = `
     <div class="brand"><span class="tag"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="2.5" y="2.5" width="19" height="19" rx="5" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.5" fill="#E53012"/></svg></span><span>BLOG·ADMIN</span></div>
     <nav class="nav">
-      ${items.map(it => `
+      ${items.filter(it => !it.adminOnly || (admin && admin.role >= 3)).map(it => `
         <a href="${it.href}" class="${it.key === active ? 'active' : ''}">
           <i>${it.i}</i><span>${it.name}</span>
         </a>`).join('')}

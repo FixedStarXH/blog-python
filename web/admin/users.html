@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>用户管理 — 后台</title>
+  <link rel="stylesheet" href="../css/admin.css?v=19">
+  <style>
+    .users-intro { max-width: 700px; color: var(--gray-6); margin: -8px 0 24px; }
+    .users-toolbar { padding: 18px 20px; border-bottom: 1px solid var(--line); margin: 0; }
+    .users-toolbar label { font-size: 12px; font-weight: 700; color: var(--gray-6); }
+    .users-toolbar input[type="search"] { flex: 1; min-width: 180px; max-width: 340px; }
+    .user-name { font-weight: 800; }
+    .user-email { color: var(--gray-6); font-size: 12px; word-break: break-all; }
+    .user-role { display: flex; align-items: center; gap: 8px; }
+    .user-role select { border: 1px solid var(--line); background: var(--paper); color: var(--ink); padding: 6px; font: inherit; }
+    .user-role select:focus-visible, .btn:focus-visible, .users-toolbar input:focus-visible, .users-toolbar select:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+    .user-role select:disabled { opacity: .65; }
+    .users-meta { font-family: var(--mono); color: var(--gray-a); font-size: 11px; }
+    .users-table th:last-child, .users-table td:last-child { position: sticky; right: 0; z-index: 1; background: var(--white); box-shadow: -6px 0 8px -6px rgba(26,25,21,.18); }
+    .users-table tbody tr:hover td:last-child { background: var(--paper-2); }
+    .users-table td:last-child .btn { white-space: nowrap; }
+    .users-note { padding: 12px 20px; background: var(--paper); color: var(--gray-6); font-size: 12px; border-top: 1px solid var(--line); }
+    @media (max-width: 720px) {
+      .users-table { min-width: 670px; }
+      .users-toolbar { align-items: stretch; }
+      .users-toolbar input[type="search"] { max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="admin-wrap">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main">
+      <div class="main-header"><h1>用户管理</h1><span class="sub">People / Access</span></div>
+      <p class="users-intro">查找账号并管理访问权限。禁用后，该账号无法继续访问接口或刷新登录状态。</p>
+      <div class="panel">
+        <form class="toolbar users-toolbar" id="filters">
+          <label for="keyword">查找账号</label>
+          <input id="keyword" type="search" maxlength="100" placeholder="用户名或邮箱" autocomplete="off">
+          <label for="role-filter">角色</label>
+          <select id="role-filter"><option value="">全部角色</option><option value="1">普通用户</option><option value="2">编辑</option><option value="3">管理员</option></select>
+          <button class="btn sm" type="submit">搜索</button>
+          <span class="toolbar-total" id="total" aria-live="polite">加载中…</span>
+        </form>
+        <div class="panel-body" style="padding:0">
+          <table class="data users-table">
+            <thead><tr><th>账号</th><th>昵称</th><th>角色</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead>
+            <tbody id="tbody"><tr><td colspan="6"><div class="empty">加载中…</div></td></tr></tbody>
+          </table>
+        </div>
+        <div class="users-note">角色修改立即生效。当前管理员不能更改自己的角色或状态。</div>
+      </div>
+      <nav class="pagination" id="pagination" aria-label="用户列表分页"></nav>
+    </main>
+  </div>
+  <script src="../js/api.js?v=8"></script>
+  <script src="../js/admin-common.js?v=12"></script>
+  <script>
+    initAdmin('users');
+    let page = 1;
+    let currentUserId = null;
+    let requestVersion = 0;
+    const pageSize = 20;
+    const roleNames = { 1: '普通用户', 2: '编辑', 3: '管理员' };
+
+    async function load() {
+      const version = ++requestVersion;
+      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+      const keyword = document.getElementById('keyword').value.trim();
+      const role = document.getElementById('role-filter').value;
+      if (keyword) params.set('keyword', keyword);
+      if (role) params.set('role', role);
+      try {
+        const data = await api.get('/api/admin/users?' + params);
+        if (version !== requestVersion) return;
+        document.getElementById('total').innerHTML = '共 <b>' + data.total + '</b> 人';
+        const rows = data.list || [];
+        document.getElementById('tbody').innerHTML = rows.map(user => {
+          const self = user.id === currentUserId;
+          const roleOptions = [1, 2, 3].map(role => '<option value="' + role + '"' + (role === user.role ? ' selected' : '') + '>' + roleNames[role] + '</option>').join('');
+          return '<tr data-id="' + user.id + '">' +
+            '<td><div class="user-name">' + esc(user.username) + '</div><div class="user-email">' + esc(user.email) + '</div></td>' +
+            '<td>' + esc(user.nickname || '—') + '</td>' +
+            '<td><div class="user-role"><select aria-label="' + esc(user.username) + '的角色" data-role="' + user.id + '"' + (self ? ' disabled' : '') + '>' + roleOptions + '</select></div></td>' +
+            '<td>' + (user.status === 1 ? '<span class="badge green">正常</span>' : '<span class="badge red">已禁用</span>') + '</td>' +
+            '<td class="users-meta">' + esc(fmtDate(user.createdAt)) + '</td>' +
+            '<td><button type="button" class="btn sm ' + (user.status === 1 ? 'danger' : 'green') + '" data-status="' + user.id + '" data-next="' + (user.status === 1 ? 0 : 1) + '"' + (self ? ' disabled' : '') + '>' + (user.status === 1 ? '禁用' : '启用') + '</button></td></tr>';
+        }).join('') || '<tr><td colspan="6"><div class="empty">没有符合条件的用户</div></td></tr>';
+        const pages = Math.max(1, Math.ceil(data.total / pageSize));
+        renderPager(document.getElementById('pagination'), page, pages, next => { page = next; load(); });
+      } catch (error) {
+        if (version !== requestVersion) return;
+        document.getElementById('tbody').innerHTML = '<tr><td colspan="6"><div class="empty">加载失败，请重试</div></td></tr>';
+        toast(error.message, true);
+      }
+    }
+
+    document.getElementById('filters').addEventListener('submit', event => {
+      event.preventDefault(); page = 1; load();
+    });
+    document.getElementById('role-filter').addEventListener('change', () => { page = 1; load(); });
+    document.getElementById('tbody').addEventListener('change', async event => {
+      const select = event.target.closest('select[data-role]');
+      if (!select) return;
+      const id = Number(select.dataset.role);
+      const role = Number(select.value);
+      const account = select.closest('tr').querySelector('.user-name').textContent;
+      if (!confirm('确定将 ' + account + ' 的角色改为' + roleNames[role] + '？')) { load(); return; }
+      select.disabled = true;
+      try { await api.put('/api/admin/users/' + id + '/role', { role }); toast('角色已更新'); }
+      catch (error) { toast(error.message, true); }
+      load();
+    });
+    document.getElementById('tbody').addEventListener('click', async event => {
+      const button = event.target.closest('button[data-status]');
+      if (!button) return;
+      const id = Number(button.dataset.status);
+      const status = Number(button.dataset.next);
+      const account = button.closest('tr').querySelector('.user-name').textContent;
+      if (!confirm('确定' + (status === 0 ? '禁用' : '启用') + '账号 ' + account + '？')) return;
+      button.disabled = true;
+      try { await api.put('/api/admin/users/' + id + '/status', { status }); toast('账号状态已更新'); }
+      catch (error) { toast(error.message, true); }
+      load();
+    });
+
+    (async () => {
+      try {
+        const me = await api.get('/api/auth/me');
+        if (me.role < 3) { document.getElementById('tbody').innerHTML = '<tr><td colspan="6"><div class="empty">需要管理员权限</div></td></tr>'; return; }
+        currentUserId = me.id;
+        localStorage.setItem('admin', JSON.stringify(me));
+        renderSidebar('users');
+        load();
+      } catch (error) { toast(error.message, true); }
+    })();
+  </script>
+</body>
+</html>

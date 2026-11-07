@@ -150,4 +150,12 @@ class CommentBatchInput(APIModel):
 
 
 class TokenRefresh(APIModel):
-    refresh_token: str = Field(alias="refreshToken")
+    refresh_token: str = Field(alias="refreshToken", min_length=1)
+
+
+class UserStatusInput(APIModel):
+    status: Literal[0, 1]
+
+
+class UserRoleInput(APIModel):
+    role: Literal[1, 2, 3]

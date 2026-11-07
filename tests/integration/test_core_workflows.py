@@ -53,6 +53,57 @@ class CoreWorkflowTests(unittest.TestCase):
         cls.env.stop()
         cls.tmp.cleanup()
 
+    def test_user_management_permissions_and_token_revocation(self):
+        import uuid
+
+        suffix = uuid.uuid4().hex[:10]
+        admin_login = self.client.post("/api/admin/login", json={"username": "admin", "password": "123456"})
+        self.assertEqual(admin_login.status_code, 200, admin_login.text)
+        admin_data = admin_login.json()["data"]
+        admin = {"Authorization": "Bearer " + admin_data["accessToken"]}
+        owner = self.client.post("/api/auth/register", json={
+            "username": "owner_" + suffix, "email": "owner_" + suffix + "@example.test", "password": "password123"
+        }).json()["data"]
+        peer = self.client.post("/api/auth/register", json={
+            "username": "peer_" + suffix, "email": "peer_" + suffix + "@example.test", "password": "password123"
+        }).json()["data"]
+        owner_id = owner["user"]["id"]
+        peer_id = peer["user"]["id"]
+        owner_headers = {"Authorization": "Bearer " + owner["accessToken"]}
+        peer_headers = {"Authorization": "Bearer " + peer["accessToken"]}
+
+        path = f"/api/admin/users/{peer_id}"
+        self.assertEqual(self.client.get("/api/admin/users").status_code, 401)
+        self.assertEqual(self.client.get("/api/admin/users", headers=owner_headers).status_code, 403)
+        self.assertEqual(self.client.put(path + "/role", headers=owner_headers, json={"role": 3}).status_code, 403)
+        for body in ({}, {"role": "3"}, {"role": 4}, {"role": None}):
+            self.assertEqual(self.client.put(path + "/role", headers=admin, json=body).status_code, 422)
+        for body in ({}, {"status": "0"}, {"status": 2}, {"status": None}):
+            self.assertEqual(self.client.put(path + "/status", headers=admin, json=body).status_code, 422)
+        self.assertEqual(self.client.put(f"/api/admin/users/{admin_data['user']['id']}/status", headers=admin, json={"status": 0}).status_code, 403)
+        self.assertEqual(self.client.put(f"/api/admin/users/{admin_data['user']['id']}/role", headers=admin, json={"role": 2}).status_code, 403)
+        self.assertEqual(self.client.put("/api/admin/users/999999/role", headers=admin, json={"role": 2}).status_code, 404)
+        self.assertEqual(self.client.get("/api/admin/users?role=0", headers=admin).status_code, 422)
+        self.assertEqual(self.client.get("/api/admin/users?pageSize=101", headers=admin).status_code, 422)
+
+        self.assertEqual(self.client.put(path + "/role", headers=admin, json={"role": 2}).status_code, 200)
+        filtered = self.client.get("/api/admin/users", headers=admin, params={"keyword": "peer_" + suffix, "role": 2}).json()["data"]
+        self.assertEqual(filtered["total"], 1)
+        self.assertEqual(filtered["list"][0]["id"], peer_id)
+        self.assertEqual(self.client.get("/api/admin/articles", headers=peer_headers).status_code, 200)
+        self.assertEqual(self.client.get("/api/admin/users", headers=peer_headers).status_code, 403)
+        self.assertEqual(self.client.put(path + "/role", headers=admin, json={"role": 1}).status_code, 200)
+        self.assertEqual(self.client.get("/api/admin/articles", headers=peer_headers).status_code, 403)
+        self.assertEqual(self.client.post("/api/admin/login", json={"username": "peer_" + suffix, "password": "password123"}).status_code, 403)
+
+        self.assertEqual(self.client.put(f"/api/admin/users/{owner_id}/status", headers=admin, json={"status": 0}).status_code, 200)
+        self.assertEqual(self.client.get("/api/auth/me", headers=owner_headers).status_code, 401)
+        self.assertEqual(self.client.post("/api/auth/refresh", json={"refreshToken": owner["refreshToken"]}).status_code, 401)
+        self.assertEqual(self.client.post("/api/auth/login", json={"username": "owner_" + suffix, "password": "password123"}).status_code, 401)
+        self.assertEqual(self.client.put(f"/api/admin/users/{owner_id}/status", headers=admin, json={"status": 1}).status_code, 200)
+        self.assertEqual(self.client.post("/api/auth/refresh", json={"refreshToken": owner["refreshToken"]}).status_code, 401)
+        self.assertEqual(self.client.post("/api/auth/login", json={"username": "owner_" + suffix, "password": "password123"}).status_code, 200)
+
     def test_auth_submission_review_and_private_article(self):
         client = self.client
         registered = client.post("/api/auth/register", json={"username": "author1", "email": "author1@example.test", "password": "password123"})
