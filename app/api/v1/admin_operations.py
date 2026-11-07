@@ -5,13 +5,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_admin, require_editor
 from app.core.config import settings
-from app.core.errors import DomainError, envelope
-from app.core.security import hash_password
-from app.core.security import hash_password
-from app.models import Article, AuditLog, Category, Comment, Image, Link, MetricEvent, SiteSetting, Tag, User
+from app.core.errors import envelope
+from app.models import Article, AuditLog, Category, Comment, Image, MetricEvent, Tag, User
 from app.api.v1.articles import article_data
-from app.api.v1.articles import _parse_datetime
+from app.services import admin_operations as admin_service
 from app.services import images as image_service
+from app.services import site_operations
 
 router = APIRouter(prefix="/admin")
 
@@ -73,57 +72,32 @@ def admin_categories(db: Session = Depends(get_db), user: User = Depends(require
 
 @router.get("/settings")
 def settings_list(db: Session = Depends(get_db), user: User = Depends(require_editor)):
-    editable={"site_title","site_subtitle","site_description","site_logo","site_beian","social_github","social_email"}
-    values={x.key:x.value for x in db.scalars(select(SiteSetting)).all() if x.key in editable}
-    raw_setting=db.get(SiteSetting,"daily_quotes")
-    raw=raw_setting.value if raw_setting else ""
-    values["quotes"]=[{"content":part.split("|",1)[0].strip(),"author":part.split("|",1)[1].strip() if "|" in part and part.split("|",1)[1].strip() else "佚名"} for part in raw.splitlines() if part.strip()]
-    return envelope(values)
+    return envelope(site_operations.read_settings(db))
 
 @router.put("/settings")
 def update_settings(body: SiteSettingsInput, db: Session = Depends(get_db), user: User = Depends(require_editor)):
     values={key:getattr(body,key) for key in ("site_title","site_subtitle","site_description","site_logo","site_beian","social_github","social_email") if key in body.model_fields_set}
     if "quotes" in body.model_fields_set:
         values["daily_quotes"]="\n".join(f"{q.content.strip()} | {q.author.strip() or '佚名'}" for q in body.quotes)
-    for key, value in values.items():
-        item = db.get(SiteSetting, str(key))
-        if item: item.value = str(value)
-        else: db.add(SiteSetting(key=str(key), value=str(value)))
-    db.commit(); return envelope({"updated":True})
+    site_operations.update_settings(db, values)
+    return envelope({"updated":True})
 
 @router.get("/dashboard")
 def dashboard(db: Session = Depends(get_db), user: User = Depends(require_editor)):
-    hot=db.scalars(select(Article).where(Article.status==1,Article.deleted_at.is_(None),Article.password=="").order_by(Article.view_count.desc()).limit(5)).all()
-    recent=db.scalars(select(Comment).where(Comment.deleted_at.is_(None)).order_by(Comment.created_at.desc()).limit(5)).all()
-    counts={"articles":db.scalar(select(func.count(Article.id)).where(Article.deleted_at.is_(None))) or 0,"users":db.scalar(select(func.count(User.id)).where(User.deleted_at.is_(None))) or 0,"views":db.scalar(select(func.coalesce(func.sum(Article.view_count),0)).where(Article.deleted_at.is_(None))) or 0,"comments":db.scalar(select(func.count(Comment.id)).where(Comment.deleted_at.is_(None))) or 0,"pendingComments":db.scalar(select(func.count(Comment.id)).where(Comment.status==0,Comment.deleted_at.is_(None))) or 0}
-    return envelope({"counts":counts,"hotArticles":[article_data(a,False) for a in hot],"recentComments":[{"id":c.id,"content":c.content,"nickname":c.nickname,"status":c.status,"createdAt":c.created_at.isoformat()} for c in recent]})
+    return envelope(admin_service.dashboard(db))
 
 @router.get("/dashboard/views-trend")
 def views_trend(days: int = Query(7,ge=1,le=90), db: Session=Depends(get_db), user: User=Depends(require_editor)):
-    start_day=date.today()-timedelta(days=days-1)
-    since=datetime.combine(start_day,time.min)
-    rows=db.execute(select(func.date(MetricEvent.created_at),func.count(MetricEvent.id)).where(MetricEvent.created_at>=since,MetricEvent.kind=="view").group_by(func.date(MetricEvent.created_at))).all()
-    counts={str(day):count for day,count in rows}
-    return envelope([{"date":(start_day+timedelta(days=i)).isoformat(),"views":counts.get((start_day+timedelta(days=i)).isoformat(),0)} for i in range(days)])
+    return envelope(admin_service.views_trend(db, days))
 
 @router.get("/audit-logs")
 def audit_logs(page: int = Query(1,ge=1), pageSize: int = Query(20,ge=1,le=100), action: str | None = Query(None,max_length=100), status: int | None = Query(None,ge=0,le=1), operatorId: int | None = Query(None,ge=1), targetType: str | None = Query(None,max_length=50), db: Session = Depends(get_db), user: User = Depends(require_editor)):
-    filters=[]
-    if action: filters.append(AuditLog.action==action)
-    if status is not None: filters.append(AuditLog.status==status)
-    if operatorId is not None: filters.append(AuditLog.operator_id==operatorId)
-    if targetType: filters.append(AuditLog.target_type==targetType)
-    query=select(AuditLog).where(*filters)
-    total=db.scalar(select(func.count()).select_from(AuditLog).where(*filters)) or 0
-    rows=db.scalars(query.order_by(AuditLog.created_at.desc(),AuditLog.id.desc()).offset((page-1)*pageSize).limit(pageSize)).all()
-    role_names={0:"未认证",1:"用户",2:"编辑",3:"管理员"}
-    recent_actions=db.scalars(select(AuditLog.action).order_by(AuditLog.created_at.desc(),AuditLog.id.desc()).limit(1000)).all()
-    actions=sorted(set(recent_actions))
-    return envelope({"list":[{"id":x.id,"operatorId":x.operator_id,"username":x.username,"role":x.role,"roleName":role_names.get(x.role,"未知"),"action":x.action,"method":x.method,"path":x.path,"targetType":x.target_type,"targetId":x.target_id,"detail":x.detail,"status":x.status,"ip":x.ip,"createdAt":x.created_at.isoformat()} for x in rows],"total":total,"page":page,"pageSize":pageSize,"actions":actions})
+    return envelope(admin_service.audit_logs(db, page, pageSize, action, status, operatorId, targetType))
 
 @router.delete("/audit-logs")
 def clear_audit(db: Session = Depends(get_db), user: User = Depends(require_admin)):
-    db.query(AuditLog).delete(); db.commit(); return envelope({})
+    admin_service.clear_audit_logs(db)
+    return envelope({})
 
 @router.post("/upload")
 async def upload(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(require_editor)):
@@ -143,22 +117,19 @@ def delete_image(image_id: int, db: Session = Depends(get_db), user: User = Depe
 
 @router.get("/links")
 def links(db: Session = Depends(get_db), user: User = Depends(require_editor)):
-    return envelope([{"id":x.id,"name":x.name,"url":x.url,"description":x.description,"sort":x.sort,"enabled":x.enabled} for x in db.scalars(select(Link).where(Link.deleted_at.is_(None)).order_by(Link.sort)).all()])
+    return envelope([{"id":x.id,"name":x.name,"url":x.url,"description":x.description,"sort":x.sort,"enabled":x.enabled} for x in site_operations.list_links(db)])
 
 @router.post("/links", status_code=201)
 def create_link(body: LinkInput, db: Session = Depends(get_db), user: User = Depends(require_editor)):
-    x=Link(**body.model_dump()); db.add(x); db.commit(); db.refresh(x)
+    x=site_operations.create_link(db, body.model_dump())
     return envelope({"id":x.id,"name":x.name,"url":x.url})
 
 @router.put("/links/{item_id}")
 def update_link(item_id: int, body: LinkInput, db: Session = Depends(get_db), user: User = Depends(require_editor)):
-    x=db.get(Link,item_id)
-    if not x or x.deleted_at: raise DomainError("link not found",404)
-    for key,value in body.model_dump().items(): setattr(x,key,value)
-    db.commit(); return envelope({"id":x.id,"name":x.name,"url":x.url})
+    x=site_operations.update_link(db, item_id, body.model_dump())
+    return envelope({"id":x.id,"name":x.name,"url":x.url})
 
 @router.delete("/links/{item_id}")
 def delete_link(item_id: int, db: Session = Depends(get_db), user: User = Depends(require_editor)):
-    x=db.get(Link,item_id)
-    if not x or x.deleted_at: raise DomainError("link not found",404)
-    x.deleted_at=datetime.utcnow(); db.commit(); return envelope({})
+    site_operations.delete_link(db, item_id)
+    return envelope({})
