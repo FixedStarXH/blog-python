@@ -63,6 +63,8 @@ docker compose up --build
 
 容器启动时执行已提交的 Alembic 迁移、幂等种子数据，再启动 API。Compose 构建前端静态资源并由 FastAPI 托管；上传文件保存在持久化卷。
 
+Uvicorn 默认只信任 loopback 上的代理转发头。若 API 位于反向代理之后，只有在代理地址固定且代理会覆盖客户端提交的 `X-Forwarded-*` 头时，才把该代理的准确 IP 加入 `BLOG_TRUSTED_PROXY_IPS`；不要设置为 `*`。未配置的代理不会被信任，限流、审计和 AI 配额会使用 TCP 对端地址。
+
 ## API 约定
 
 - API 保留 `/api` 路径、小驼峰字段和 `{code,message,data}` JSON 信封。

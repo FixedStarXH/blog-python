@@ -331,6 +331,47 @@ class BrowserWorkflowTests(unittest.TestCase):
             user.close()
             browser.close()
 
+    def test_ai_chat_shows_partial_answer_and_upstream_failure(self):
+        from playwright.sync_api import expect, sync_playwright
+
+        base = os.environ["BLOG_BROWSER_BASE_URL"].rstrip("/")
+        with sync_playwright() as playwright:
+            executable = os.environ.get("BLOG_BROWSER_EXECUTABLE")
+            browser = playwright.chromium.launch(headless=True, **({"executable_path": executable} if executable else {}))
+            page = browser.new_page()
+            login = page.request.post(base + "/api/admin/login", data={
+                "username": os.environ["BLOG_BROWSER_ADMIN_USER"],
+                "password": os.environ["BLOG_BROWSER_ADMIN_PASSWORD"],
+            })
+            self.assertEqual(login.status, 200, login.text())
+            headers = {"Authorization": "Bearer " + login.json()["data"]["accessToken"]}
+            created = page.request.post(base + "/api/admin/articles", headers=headers, data={
+                "title": "AI browser failure fixture " + uuid.uuid4().hex[:8],
+                "content": "Safe public fixture for AI stream error testing.",
+                "categoryId": 1,
+                "status": 1,
+            })
+            self.assertEqual(created.status, 201, created.text())
+            article_id = created.json()["data"]["id"]
+
+            def mock_interrupted_stream(route):
+                route.fulfill(
+                    status=200,
+                    headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+                    body='data: {"delta":"partial answer"}\n\ndata: {"error":{"message":"mock upstream failure"}}\n\n',
+                )
+
+            page.route("**/api/ai/ask", mock_interrupted_stream)
+            page.goto(base + "/article.html?id=" + str(article_id))
+            page.locator("#ai-chat-btn").click()
+            page.locator("#ai-chat-input").fill("Explain this article")
+            page.locator("#ai-chat-form button[type=submit]").click()
+            expect(page.locator("#ai-chat-body")).to_contain_text("partial answer")
+            expect(page.locator("#ai-chat-body")).to_contain_text("mock upstream failure")
+            expect(page.locator("#ai-chat-send")).to_be_enabled()
+            page.request.delete(base + "/api/admin/articles/" + str(article_id), headers=headers)
+            browser.close()
+
 
 if __name__ == "__main__":
     unittest.main()
