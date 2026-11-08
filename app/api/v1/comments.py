@@ -28,7 +28,7 @@ def list_comments(article_id: int, db: Session = Depends(get_db), page: int = Qu
     return envelope({"list":[comment_dict(c) for c in rows],"total":total,"page":page,"pageSize":pageSize})
 
 
-@router.post("/articles/{article_id}/comments", status_code=201)
+@router.post("/articles/{article_id}/comments")
 def create_comment(article_id: int, body: CommentInput, request: Request, db: Session = Depends(get_db), user: User | None = Depends(optional_user)):
     article = db.scalar(select(Article).where(Article.id == article_id, *visible_conditions()))
     if not article: raise DomainError("article not found", 404)

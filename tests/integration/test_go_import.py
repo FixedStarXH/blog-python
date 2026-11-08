@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 
 from pwdlib.hashers.bcrypt import BcryptHasher
@@ -25,7 +26,7 @@ class GoImportTests(unittest.TestCase):
             db.executescript("""
                 CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL, email TEXT NOT NULL, password TEXT NOT NULL, role INTEGER, status INTEGER);
                 CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
-                CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+                CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL, created_at DATETIME, updated_at DATETIME);
                 CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, author_id INTEGER NOT NULL, category_id INTEGER NOT NULL, status INTEGER, password TEXT, view_count INTEGER, like_count INTEGER);
                 CREATE TABLE article_tags (article_id INTEGER, tag_id INTEGER);
                 CREATE TABLE comments (id INTEGER PRIMARY KEY, article_id INTEGER, user_id INTEGER, parent_id INTEGER, content TEXT, nickname TEXT, status INTEGER);
@@ -37,7 +38,7 @@ class GoImportTests(unittest.TestCase):
             bcrypt_hash = BcryptHasher(rounds=4, prefix="2a").hash("old-password")
             db.execute("INSERT INTO users VALUES (1,?,?,?,?,?)", ("legacy", "legacy@example.test", bcrypt_hash, 3, 1))
             db.execute("INSERT INTO categories VALUES (1, 'General')")
-            db.execute("INSERT INTO tags VALUES (1, 'Python')")
+            db.execute("INSERT INTO tags VALUES (1, 'Python', '2026-01-02 03:04:05.123456', '2026-02-03 04:05:06.654321')")
             db.execute("INSERT INTO articles VALUES (1, 'Public', 'public content', 1, 1, 1, '', 12, 1)")
             db.execute("INSERT INTO articles VALUES (2, 'Private', 'secret content', 1, 1, 1, 'old-secret', 0, 0)")
             db.execute("INSERT INTO article_tags VALUES (1, 1)")
@@ -82,6 +83,9 @@ class GoImportTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM article_metrics").fetchone()[0], 2)
             self.assertEqual(json.loads(db.execute("SELECT embedding FROM article_chunks WHERE id=1").fetchone()[0]), [1.0, 0.5])
             self.assertEqual(db.execute("SELECT value FROM settings WHERE `key`='site_title'").fetchone()[0], "Old site")
+            tag_times = db.execute("SELECT created_at,updated_at FROM tags WHERE id=1").fetchone()
+            self.assertEqual(tuple(datetime.fromisoformat(value) for value in tag_times),
+                             (datetime(2026, 1, 2, 3, 4, 5, 123456), datetime(2026, 2, 3, 4, 5, 6, 654321)))
         with self.assertRaises(ImportErrorWithContext):
             import_database(self.source_url, self.target_url, apply=True)
 
@@ -118,7 +122,7 @@ class GoImportTests(unittest.TestCase):
             db.execute("ALTER TABLE categories ADD COLUMN deleted_at DATETIME")
             db.execute("ALTER TABLE tags ADD COLUMN deleted_at DATETIME")
             db.execute("INSERT INTO categories VALUES (2, '', '2026-01-01 00:00:00')")
-            db.execute("INSERT INTO tags VALUES (2, '', '2026-01-01 00:00:00')")
+            db.execute("INSERT INTO tags (id,name,deleted_at) VALUES (2, '', '2026-01-01 00:00:00')")
             db.commit()
         preview = import_database(self.source_url, self.target_url)
         self.assertEqual(preview["skipped"]["categories_empty_deleted"], 1)

@@ -33,7 +33,7 @@ def token_data(user: User, access: str, refresh: str):
     return envelope({"accessToken": access, "refreshToken": refresh, "user": {"id": user.id, "username": user.username, "email": user.email, "nickname": user.nickname, "avatar": user.avatar, "role": user.role}})
 
 
-@router.post("/auth/register", status_code=201)
+@router.post("/auth/register")
 def register(body: Credentials, db: Session = Depends(get_db)):
     if not body.email:
         raise DomainError("email is required")

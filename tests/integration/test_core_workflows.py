@@ -138,7 +138,7 @@ class CoreWorkflowTests(unittest.TestCase):
     def test_auth_submission_review_and_private_article(self):
         client = self.client
         registered = client.post("/api/auth/register", json={"username": "author1", "email": "author1@example.test", "password": "password123"})
-        self.assertEqual(registered.status_code, 201, registered.text)
+        self.assertEqual(registered.status_code, 200, registered.text)
         tokens = registered.json()["data"]
         author = {"Authorization": "Bearer " + tokens["accessToken"]}
         self.assertEqual(client.get("/api/admin/articles", headers=author).status_code, 403)
@@ -152,7 +152,7 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(admin.status_code, 200, admin.text)
         editor = {"Authorization": "Bearer " + admin.json()["data"]["accessToken"]}
         created = client.post("/api/my/articles", headers=author, json={"title": "Private post", "content": "private body", "categoryId": 1, "password": "article-secret"})
-        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(created.status_code, 200, created.text)
         article_id = created.json()["data"]["id"]
         self.assertEqual(client.get(f"/api/articles/{article_id}").status_code, 404)
         self.assertEqual(client.put(f"/api/admin/articles/{article_id}/approve", headers=editor).status_code, 200)
@@ -184,7 +184,7 @@ class CoreWorkflowTests(unittest.TestCase):
         with patch("app.services.auth.hash_password", side_effect=synchronized_hash):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 responses = list(pool.map(register, ["race_a@example.test", "race_b@example.test"]))
-        self.assertEqual(sorted(response.status_code for response in responses), [201, 409])
+        self.assertEqual(sorted(response.status_code for response in responses), [200, 409])
         duplicate = next(response for response in responses if response.status_code == 409)
         self.assertEqual(duplicate.json()["code"], 409)
 
@@ -197,7 +197,7 @@ class CoreWorkflowTests(unittest.TestCase):
         response = client.post("/api/auth/register", json={
             "username": "account_contract", "email": "account_contract@example.test", "password": "abc123"
         })
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.status_code, 200)
         tokens = response.json()["data"]
         headers = {"Authorization": "Bearer " + tokens["accessToken"]}
         profile = {"nickname": "New name", "avatar": "/uploads/profile.png", "bio": "About me"}
@@ -240,7 +240,7 @@ class CoreWorkflowTests(unittest.TestCase):
         headers = {"Authorization": "Bearer " + tokens["accessToken"]}
         payload = {"title": "Original submission", "content": "original body", "categoryId": 1}
         created = client.post("/api/my/articles", headers=headers, json=payload)
-        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.status_code, 200)
         article_id = created.json()["data"]["id"]
         invalid = {**payload, "title": "Changed", "categoryId": deleted_id}
         self.assertEqual(client.post("/api/my/articles", headers=headers, json=invalid).status_code, 400)
@@ -526,7 +526,7 @@ class CoreWorkflowTests(unittest.TestCase):
         editor = {"Authorization": "Bearer " + admin["accessToken"]}
         payload = {"title": "Private editing", "content": "secret body", "categoryId": 1, "password": "original-secret"}
         created = client.post("/api/my/articles", headers=author, json=payload)
-        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(created.status_code, 200, created.text)
         article_id = created.json()["data"]["id"]
         self.assertTrue(created.json()["data"]["hasPassword"])
         self.assertEqual(client.put(f"/api/admin/articles/{article_id}/approve", headers=editor).status_code, 200)
@@ -637,7 +637,7 @@ class CoreWorkflowTests(unittest.TestCase):
         admin = client.post("/api/admin/login", json={"username": "admin", "password": "123456"}).json()["data"]
         admin_headers = {"Authorization": "Bearer " + admin["accessToken"]}
         created = client.post("/api/my/articles", headers=owner_headers, json={"title": "Public post", "content": "Public body", "categoryId": 1})
-        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(created.status_code, 200, created.text)
         article_id = created.json()["data"]["id"]
         self.assertEqual(client.get(f"/api/my/articles/{article_id}", headers=other_headers).status_code, 404)
         self.assertEqual(client.delete(f"/api/my/articles/{article_id}", headers=other_headers).status_code, 404)
@@ -645,7 +645,7 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(client.put(f"/api/articles/{article_id}/view").json()["data"]["viewCount"], 1)
         self.assertEqual(client.put(f"/api/articles/{article_id}/view").json()["data"]["viewCount"], 1)
         comment = client.post(f"/api/articles/{article_id}/comments", json={"content": "Hello", "nickname": "Visitor"})
-        self.assertEqual(comment.status_code, 201, comment.text)
+        self.assertEqual(comment.status_code, 200, comment.text)
         self.assertEqual(comment.json()["code"], 200)
         comment_id = comment.json()["data"]["id"]
         self.assertEqual(client.get(f"/api/articles/{article_id}/comments").json()["data"]["total"], 0)
@@ -686,7 +686,7 @@ class CoreWorkflowTests(unittest.TestCase):
         for invalid in ({**valid,"enabled":"false"},{**valid,"sort":"2"},{**valid,"url":"javascript:alert(1)"},{**valid,"name":" "},{**valid,"description":"x"*201}):
             self.assertEqual(self.client.post("/api/admin/links",headers=headers,json=invalid).status_code,422)
         created=self.client.post("/api/admin/links",headers=headers,json={**valid,"enabled":True})
-        self.assertEqual(created.status_code,201,created.text)
+        self.assertEqual(created.status_code,200,created.text)
         link_id=created.json()["data"]["id"]
         self.assertTrue(any(link["id"]==link_id for link in self.client.get("/api/links").json()["data"]))
         updated=self.client.put(f"/api/admin/links/{link_id}",headers=headers,json={**valid,"sort":-1})
@@ -735,7 +735,7 @@ class CoreWorkflowTests(unittest.TestCase):
         invalid=self.client.post("/api/admin/links",headers=admin,json={"name":"bad","url":"javascript:alert(1)"})
         self.assertEqual(invalid.status_code,422)
         created=self.client.post("/api/admin/links",headers=admin,json={"name":"Audited","url":"https://example.test/audit","enabled":True})
-        self.assertEqual(created.status_code,201,created.text)
+        self.assertEqual(created.status_code,200,created.text)
         link_id=created.json()["data"]["id"]
         self.assertEqual(self.client.delete("/api/admin/links/987654321",headers=admin).status_code,404)
         with SessionLocal() as db:
@@ -756,7 +756,7 @@ class CoreWorkflowTests(unittest.TestCase):
             return self.client.post("/api/admin/links",headers=admin,json={"name":f"Concurrent {suffix} {index}","url":f"https://example.test/{suffix}/{index}","enabled":True})
         with ThreadPoolExecutor(max_workers=4) as pool:
             concurrent=list(pool.map(concurrent_create,range(4)))
-        self.assertTrue(all(response.status_code==201 for response in concurrent))
+        self.assertTrue(all(response.status_code==200 for response in concurrent))
         concurrent_ids={response.json()["data"]["id"] for response in concurrent}
         with SessionLocal() as db:
             events=db.scalars(select(AuditLog).where(AuditLog.target_type=="links",AuditLog.target_id.in_(concurrent_ids))).all()
@@ -838,7 +838,7 @@ class CoreWorkflowTests(unittest.TestCase):
         with patch("app.main.SessionLocal",side_effect=RuntimeError("simulated audit store failure")):
             with self.assertLogs("blog",level="ERROR") as captured:
                 persisted=self.client.post("/api/admin/links",headers=headers,json=payload)
-        self.assertEqual(persisted.status_code,201,persisted.text)
+        self.assertEqual(persisted.status_code,200,persisted.text)
         self.assertTrue(any("audit_write_failed" in line for line in captured.output))
         with SessionLocal() as db:
             self.assertIsNotNone(db.scalar(select(Link).where(Link.name=="Audit failure probe")))
@@ -957,7 +957,7 @@ class CoreWorkflowTests(unittest.TestCase):
         for body in ({"content": "   "}, {"content": "reply", "parentId": 0}):
             self.assertEqual(self.client.post(path, json=body).status_code, 422)
         reply = self.client.post(path, json={"content": "reply", "parentId": first_id})
-        self.assertEqual(reply.status_code, 201)
+        self.assertEqual(reply.status_code, 200)
         self.assertEqual(reply.json()["data"]["parentId"], first_id)
         self.assertEqual(reply.json()["data"]["status"], 0)
         self.assertEqual(self.client.post(path, json={"content": "bad parent", "parentId": reply.json()["data"]["id"]}).status_code, 404)
@@ -988,11 +988,11 @@ class CoreWorkflowTests(unittest.TestCase):
         editor = {"Authorization": "Bearer " + admin["accessToken"]}
         path = f"/api/articles/{article_id}/comments"
         explicit = client.post(path, headers=author, json={"content": "first", "nickname": "Chosen name"})
-        self.assertEqual(explicit.status_code, 201, explicit.text)
+        self.assertEqual(explicit.status_code, 200, explicit.text)
         comment = explicit.json()["data"]
         self.assertEqual(comment["nickname"], "Chosen name")
         fallback = client.post(path, headers=author, json={"content": "second", "nickname": ""})
-        self.assertEqual(fallback.status_code, 201, fallback.text)
+        self.assertEqual(fallback.status_code, 200, fallback.text)
         self.assertEqual(fallback.json()["data"]["nickname"], "comment_user")
         guest = client.post(path, json={"content": "guest", "nickname": ""})
         self.assertEqual(guest.json()["data"]["nickname"], "游客")
@@ -1035,6 +1035,10 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(client.put(f"/api/admin/categories/{category_id}", headers=editor, json={"sort": 0}).status_code, 200)
         tag = client.post("/api/admin/tags", headers=editor, json={"name": "Test taxonomy tag"}).json()["data"]
         tag_id = tag["id"]
+        tag_list = client.get("/api/admin/tags?pageSize=100", headers=editor).json()["data"]["list"]
+        tag_row = next(item for item in tag_list if item["id"] == tag_id)
+        self.assertIsNotNone(tag_row["createdAt"])
+        self.assertIsNotNone(tag_row["updatedAt"])
         self.assertEqual(client.post("/api/admin/tags", headers=editor, json={"name": "Test taxonomy tag"}).status_code, 409)
         self.assertEqual(client.get("/api/admin/tags?pageSize=0", headers=editor).status_code, 422)
         column = client.post("/api/my/columns", headers=owner, json={"name": "My column"}).json()["data"]
@@ -1047,7 +1051,7 @@ class CoreWorkflowTests(unittest.TestCase):
         payload = {"title": "Column post", "content": "body", "categoryId": category_id, "columnId": column_id, "tagIds": [tag_id]}
         self.assertEqual(client.post("/api/my/articles", headers=outsider, json=payload).status_code, 400)
         article = client.post("/api/my/articles", headers=owner, json=payload)
-        self.assertEqual(article.status_code, 201, article.text)
+        self.assertEqual(article.status_code, 200, article.text)
         article_id = article.json()["data"]["id"]
         admin_category = next(row for row in client.get("/api/admin/categories", headers=editor).json()["data"] if row["id"] == category_id)
         self.assertEqual(admin_category["articleCount"], 1)
@@ -1099,7 +1103,7 @@ class CoreWorkflowTests(unittest.TestCase):
             submitted = pool.submit(submit)
             removed = pool.submit(remove)
             result = (submitted.result(), removed.result())
-        self.assertIn(result, ((201, 409), (400, 200)))
+        self.assertIn(result, ((200, 409), (400, 200)))
         with SessionLocal() as db:
             item = db.get(Category, category)
             article = db.scalar(select(Article).where(Article.category_id == category))
@@ -1645,6 +1649,10 @@ class CoreWorkflowTests(unittest.TestCase):
         self.assertEqual(listing["list"][0]["name"], "Photo.PNG")
         self.assertEqual(listing["list"][0]["ext"], "png")
         self.assertEqual(listing["list"][0]["uploaderId"], admin_data["user"]["id"])
+        uploader = listing["list"][0]["uploader"]
+        self.assertEqual(uploader["id"], admin_data["user"]["id"])
+        self.assertEqual(uploader["username"], "admin")
+        self.assertEqual(set(uploader), {"id", "createdAt", "updatedAt", "username", "email", "nickname", "avatar", "role", "status", "bio"})
         self.assertGreaterEqual(listing["total"], 2)
         self.assertEqual(self.client.get("/api/admin/images?page=2&pageSize=1", headers=headers).json()["data"]["list"][0]["id"], images[0]["id"])
         for item in images:

@@ -34,10 +34,10 @@ def admin_tags(db: Session = Depends(get_db), user: User = Depends(require_edito
     if keyword: q=q.where(Tag.name.contains(keyword))
     total=db.scalar(select(func.count()).select_from(q.subquery())) or 0
     rows=db.scalars(q.order_by(Tag.id.desc()).offset((page-1)*pageSize).limit(pageSize)).all()
-    return envelope({"list":[{"id":x.id,"name":x.name,"articleCount":db.scalar(select(func.count(Article.id)).join(Article.tags).where(Tag.id==x.id,Article.deleted_at.is_(None))) or 0} for x in rows],"total":total,"page":page,"pageSize":pageSize})
+    return envelope({"list":[{"id":x.id,"name":x.name,"articleCount":db.scalar(select(func.count(Article.id)).join(Article.tags).where(Tag.id==x.id,Article.deleted_at.is_(None))) or 0,"createdAt":x.created_at.isoformat() if x.created_at else None,"updatedAt":x.updated_at.isoformat() if x.updated_at else None} for x in rows],"total":total,"page":page,"pageSize":pageSize})
 
 
-@router.post("/admin/categories", status_code=201)
+@router.post("/admin/categories")
 def create_category(body: CategoryInput, db: Session = Depends(get_db), user: User = Depends(require_editor)):
     name = body.name
     if db.scalar(select(Category.id).where(Category.name == name)): raise DomainError("category already exists", 409)
@@ -69,7 +69,7 @@ def delete_category(item_id: int, db: Session = Depends(get_db), user: User = De
     db.commit(); return envelope({})
 
 
-@router.post("/admin/tags", status_code=201)
+@router.post("/admin/tags")
 def create_tag(body: TagInput, db: Session = Depends(get_db), user: User = Depends(require_editor)):
     name = body.name
     if db.scalar(select(Tag.id).where(Tag.name == name)): raise DomainError("tag already exists", 409)

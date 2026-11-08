@@ -9,6 +9,7 @@ article_tags = Table(
     Column("article_id", ForeignKey("articles.id", ondelete="CASCADE"), primary_key=True),
     Column("tag_id", ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
 )
+_TAG_TIMESTAMP_TYPE = DateTime().with_variant(DATETIME(fsp=3), "mysql")
 
 
 class User(Base):
@@ -43,6 +44,8 @@ class Tag(Base):
     __table_args__ = (UniqueConstraint("name"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(50))
+    created_at: Mapped[datetime | None] = mapped_column(_TAG_TIMESTAMP_TYPE, nullable=True, default=datetime.utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(_TAG_TIMESTAMP_TYPE, nullable=True, default=datetime.utcnow, onupdate=datetime.utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     articles = relationship("Article", secondary=article_tags, back_populates="tags")
 
@@ -145,6 +148,7 @@ class Image(Base):
     ext: Mapped[str] = mapped_column(String(10))
     uploader_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    uploader: Mapped[User] = relationship(foreign_keys=[uploader_id], lazy="joined")
 
 
 class AuditLog(Base):

@@ -56,8 +56,8 @@ class ComposeIntegrationTests(unittest.TestCase):
             submission = pool.submit(submit)
             deletion = pool.submit(remove)
             created, removed = submission.result(), deletion.result()
-        self.assertIn((created.status_code, removed.status_code), ((201, 409), (400, 200)))
-        if created.status_code == 201:
+        self.assertIn((created.status_code, removed.status_code), ((200, 409), (400, 200)))
+        if created.status_code == 200:
             article_id = created.json()["data"]["id"]
             categories = self.request_ok("GET", "/api/admin/categories", headers=self.admin).json()["data"]
             self.assertEqual(next(row["articleCount"] for row in categories if row["id"] == category), 1)
@@ -154,8 +154,8 @@ class ComposeIntegrationTests(unittest.TestCase):
 
         with ThreadPoolExecutor(max_workers=3) as pool:
             responses = list(pool.map(register, range(3)))
-        self.assertEqual(sorted(response.status_code for response in responses), [201, 409, 409])
-        tokens = next(response.json()["data"] for response in responses if response.status_code == 201)
+        self.assertEqual(sorted(response.status_code for response in responses), [200, 409, 409])
+        tokens = next(response.json()["data"] for response in responses if response.status_code == 200)
         headers = {"Authorization": "Bearer " + tokens["accessToken"]}
         profile = self.request_ok("PUT", "/api/auth/me", headers=headers, json={
             "nickname": "Updated", "avatar": "", "bio": ""

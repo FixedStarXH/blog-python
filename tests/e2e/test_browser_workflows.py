@@ -29,7 +29,7 @@ class BrowserWorkflowTests(unittest.TestCase):
             headers={"Authorization":"Bearer "+token}
             headers={**headers,"Content-Type":"application/json"}
             created=page.request.post(base+"/api/admin/links",headers=headers,data=json.dumps({"name":"Audit UI "+suffix,"url":"https://example.test/"+suffix,"enabled":True}))
-            self.assertEqual(created.status,201,created.text())
+            self.assertEqual(created.status,200,created.text())
             invalid=page.request.post(base+"/api/admin/links",headers=headers,data=json.dumps({"name":"Bad audit "+suffix,"url":"javascript:alert(1)"}))
             self.assertEqual(invalid.status,422)
 
@@ -139,7 +139,7 @@ class BrowserWorkflowTests(unittest.TestCase):
             created = page.request.post(base + "/api/auth/register", data={
                 "username": username, "email": username + "@validation.test", "password": "password123"
             })
-            self.assertEqual(created.status, 201)
+            self.assertEqual(created.status, 200)
             tokens = created.json()["data"]
             page.goto(base + "/admin/login.html")
             page.locator("#username").fill(os.environ["BLOG_BROWSER_ADMIN_USER"])
@@ -313,7 +313,7 @@ class BrowserWorkflowTests(unittest.TestCase):
             ap.locator('#a-password').fill('private-test-pass')
             with ap.expect_response(lambda response: response.url.endswith('/api/admin/articles') and response.request.method == 'POST') as created:
                 ap.locator('#form-modal button[type=submit]').click()
-            self.assertEqual(created.value.status, 201)
+            self.assertEqual(created.value.status, 200)
             private_id = str(created.value.json()['data']['id'])
             page.goto(BASE + '/article.html?id=' + private_id)
             expect(page.locator('#lock-input')).to_be_visible()
@@ -351,7 +351,7 @@ class BrowserWorkflowTests(unittest.TestCase):
                 "categoryId": 1,
                 "status": 1,
             })
-            self.assertEqual(created.status, 201, created.text())
+            self.assertEqual(created.status, 200, created.text())
             article_id = created.json()["data"]["id"]
 
             def mock_interrupted_stream(route):

@@ -161,7 +161,7 @@ def my_articles(user: User = Depends(current_user), db: Session = Depends(get_db
     return envelope({"list": [article_data(a) for a in rows], "total": total, "page": page, "pageSize": pageSize})
 
 
-@router.post("/my/articles", status_code=201)
+@router.post("/my/articles")
 def create_my_article(body: ArticleInput, user: User = Depends(current_user), db: Session = Depends(get_db)):
     lock_category(db, body.category_id)
     lock_column(db, body.column_id, user.id)

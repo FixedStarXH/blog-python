@@ -108,7 +108,7 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db), us
 def images(db: Session = Depends(get_db), user: User = Depends(require_editor), page: int = Query(1, ge=1), pageSize: int = Query(24, ge=1, le=100)):
     q=select(Image); total=db.scalar(select(func.count(Image.id))) or 0
     rows=db.scalars(q.order_by(Image.created_at.desc(), Image.id.desc()).offset((page-1)*pageSize).limit(pageSize)).all()
-    return envelope({"list":[{"id":x.id,"url":x.url,"name":x.name,"size":x.size,"ext":x.ext,"uploaderId":x.uploader_id,"createdAt":x.created_at.isoformat()} for x in rows],"total":total,"page":page,"pageSize":pageSize})
+    return envelope({"list":[{"id":x.id,"url":x.url,"name":x.name,"size":x.size,"ext":x.ext,"uploaderId":x.uploader_id,"uploader":{"id":x.uploader.id,"createdAt":x.uploader.created_at.isoformat(),"updatedAt":x.uploader.updated_at.isoformat(),"username":x.uploader.username,"email":x.uploader.email,"nickname":x.uploader.nickname,"avatar":x.uploader.avatar,"role":x.uploader.role,"status":x.uploader.status,"bio":x.uploader.bio},"createdAt":x.created_at.isoformat()} for x in rows],"total":total,"page":page,"pageSize":pageSize})
 
 @router.delete("/images/{image_id}")
 def delete_image(image_id: int, db: Session = Depends(get_db), user: User = Depends(require_editor)):
@@ -119,7 +119,7 @@ def delete_image(image_id: int, db: Session = Depends(get_db), user: User = Depe
 def links(db: Session = Depends(get_db), user: User = Depends(require_editor)):
     return envelope([{"id":x.id,"name":x.name,"url":x.url,"description":x.description,"sort":x.sort,"enabled":x.enabled} for x in site_operations.list_links(db)])
 
-@router.post("/links", status_code=201)
+@router.post("/links")
 def create_link(body: LinkInput, db: Session = Depends(get_db), user: User = Depends(require_editor)):
     x=site_operations.create_link(db, body.model_dump())
     return envelope({"id":x.id,"name":x.name,"url":x.url})

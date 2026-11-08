@@ -27,7 +27,7 @@ def article_detail(article_id: int, db: Session = Depends(get_db), user: User = 
     a = article_service.get_article(db, article_id)
     return envelope(article_data(a))
 
-@router.post("/articles", status_code=201)
+@router.post("/articles")
 def create_article(body: AdminArticleInput, db: Session = Depends(get_db), user: User = Depends(require_editor)):
     a = article_service.create_article(db, body, user.id)
     return envelope(article_data(a))
